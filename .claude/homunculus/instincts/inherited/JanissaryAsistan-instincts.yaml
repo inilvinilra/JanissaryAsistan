@@ -1,0 +1,147 @@
+# Instincts generated from https://github.com/inilvinilra/JanissaryAsistan
+# Generated: 2026-08-07T20:42:48.863Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: JanissaryAsistan-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/inilvinilra/JanissaryAsistan
+---
+
+# JanissaryAsistan Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat
+
+## Evidence
+
+- 2 commits analyzed
+- Detected conventional commit pattern
+- Examples: feat: Implement Federated Search Engine (GitHub & Semantic Scholar) with ZERO API key requirement, feat: Astro mimari entegrasyonu, KYS motoru taksonomi guncellemesi ve ilk Shadcn bilesenleri
+
+---
+id: JanissaryAsistan-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/inilvinilra/JanissaryAsistan
+---
+
+# JanissaryAsistan Commit Length
+
+## Action
+
+Write moderate-length commit messages (~95 characters)
+
+## Evidence
+
+- Average commit message length: 95 chars
+- Based on 2 commits
+
+---
+id: JanissaryAsistan-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/inilvinilra/JanissaryAsistan
+---
+
+# JanissaryAsistan Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: JanissaryAsistan-import-alias
+trigger: "when importing modules"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/inilvinilra/JanissaryAsistan
+---
+
+# JanissaryAsistan Import Alias
+
+## Action
+
+Use path aliases (@/, ~/) instead of relative imports
+
+## Evidence
+
+- Import analysis shows alias pattern
+- Example: import { x } from '@/lib/x'
+
+---
+id: JanissaryAsistan-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/inilvinilra/JanissaryAsistan
+---
+
+# JanissaryAsistan Export Style
+
+## Action
+
+Prefer default exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: default
+
+---
+id: JanissaryAsistan-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/inilvinilra/JanissaryAsistan
+---
+
+# JanissaryAsistan Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: 
+
+---
+id: JanissaryAsistan-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/inilvinilra/JanissaryAsistan
+---
+
+# JanissaryAsistan Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
