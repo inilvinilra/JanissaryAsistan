@@ -44,3 +44,5 @@ rayon = "1"
 
 # Rate limiting / retry
 tokio-retry = "0.3"
+scraper = "0.27.0"
+urlencoding = "2.1.3"
