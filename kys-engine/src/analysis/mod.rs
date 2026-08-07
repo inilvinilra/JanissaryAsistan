@@ -5,6 +5,8 @@ use crate::models::*;
 use crate::parser::extract_keywords;
 use std::collections::HashSet;
 
+pub mod taxonomy;
+
 /// Proje belgesi ile internet kaynakları arasındaki benzerliği hesaplar
 pub fn compute_similarity(
     document: &Document,
@@ -91,9 +93,10 @@ fn generate_similarity_explanation(score: f64, matched_keywords: &[String]) -> S
 }
 
 /// Kural tabanlı belge puanlaması (AI olmadan)
-pub fn score_document(document: &Document) -> ScoreCard {
+pub fn score_document(document: &Document, category_fit: f64, classified_category: Option<String>) -> ScoreCard {
     ScoreCard {
-        category_fit: score_category_fit(document),
+        category_fit,
+        classified_category,
         completeness: score_completeness(document),
         reference_quality: score_references(document),
         technical_depth: score_technical_depth(document),
@@ -101,23 +104,7 @@ pub fn score_document(document: &Document) -> ScoreCard {
     }
 }
 
-/// Kategori uyumu: kritik bölümler var mı?
-fn score_category_fit(doc: &Document) -> f64 {
-    // Şimdilik başlık ve keyword analizi ile temel skor
-    // Tauri UI'da kategori seçimi yapılınca bu iyileşecek
-    let keyword_count = doc.keywords.len();
-    let heading_count = doc.headings.len();
 
-    let base = match keyword_count {
-        0..=5 => 40.0,
-        6..=10 => 60.0,
-        11..=20 => 75.0,
-        _ => 85.0,
-    };
-
-    let heading_bonus = (heading_count as f64 * 2.0).min(15.0);
-    (base + heading_bonus).min(100.0)
-}
 
 /// Bölüm tamlığı: özet, giriş, sonuç, yöntem var mı?
 fn score_completeness(doc: &Document) -> f64 {

@@ -90,18 +90,17 @@ fn analyze_text(filename: &str, file_type: FileType, raw_text: String) -> Result
         || lower.contains("bibliography");
 
     Ok(Document {
-        filename: Path::new(filename)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(filename)
-            .to_string(),
-        file_type,
+        filename: Path::new(filename).file_name().unwrap_or_default().to_string_lossy().to_string(),
+        file_type: file_type,
         raw_text: normalized,
         word_count,
         headings,
         keywords,
         references,
         has_references,
+        has_bibliography: false,
+        reference_count: 0,
+        classified_category: None,
         has_abstract,
         has_conclusion,
         has_methodology,

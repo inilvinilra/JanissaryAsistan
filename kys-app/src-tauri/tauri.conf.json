@@ -5,7 +5,7 @@
   "identifier": "com.emirh.kys-app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:4321",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
