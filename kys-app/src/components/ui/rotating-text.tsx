@@ -53,4 +53,3 @@ function RotatingText({
 }
 
 export { RotatingText, type RotatingTextProps }
-export default RotatingText

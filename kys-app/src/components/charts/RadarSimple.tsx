@@ -56,5 +56,3 @@ export function RadarSimple() {
     </div>
   )
 }
-
-export default RadarSimple

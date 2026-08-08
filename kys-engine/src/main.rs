@@ -1,12 +1,11 @@
 // KYS Engine - Ana giriş noktası
 // Karar Yönetim Sistemi - Proje Analiz ve Araştırma Motoru
 
-mod models;
-mod parser;
-mod research;
-mod analysis;
-mod database;
-mod db_test;
+use kys_engine::models;
+use kys_engine::parser;
+use kys_engine::research;
+use kys_engine::analysis;
+use kys_engine::database;
 
 
 

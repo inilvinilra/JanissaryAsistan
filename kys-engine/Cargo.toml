@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "KYS - Karar Yönetim Sistemi: Proje analiz ve araştırma motoru"
 
+[lib]
+name = "kys_engine"
+path = "src/lib.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }

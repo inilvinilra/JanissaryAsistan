@@ -137,5 +137,3 @@ export const SplittingText: React.FC<SplittingTextProps> = ({
     </motion.span>
   )
 }
-
-export default SplittingText

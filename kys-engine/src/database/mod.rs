@@ -29,6 +29,21 @@ impl Database {
     /// Tabloları oluşturur (yoksa)
     async fn create_tables(&self) -> Result<()> {
         sqlx::query("
+            CREATE TABLE IF NOT EXISTS users (
+                id              SERIAL PRIMARY KEY,
+                name            TEXT NOT NULL,
+                email           TEXT UNIQUE NOT NULL,
+                password_hash   TEXT NOT NULL,
+                is_verified     BOOLEAN DEFAULT FALSE,
+                created_at      TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS email_verifications (
+                email           TEXT PRIMARY KEY,
+                otp_code        TEXT NOT NULL,
+                expires_at      TIMESTAMP NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS projects (
                 id          SERIAL PRIMARY KEY,
                 filename    TEXT NOT NULL,
@@ -206,5 +221,58 @@ impl Database {
             let grade: String = r.get(3);
             (id as i64, filename, total, grade)
         }).collect())
+    }
+    /// Kullanıcı kaydı oluşturur
+    pub async fn create_user(&self, name: &str, email: &str, password_hash: &str) -> Result<i64> {
+        let row = sqlx::query(
+            "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id"
+        )
+        .bind(name)
+        .bind(email)
+        .bind(password_hash)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let id: i32 = row.get("id");
+        Ok(id as i64)
+    }
+
+    /// OTP (Doğrulama) kodu kaydeder/günceller
+    pub async fn save_otp(&self, email: &str, otp: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO email_verifications (email, otp_code, expires_at) 
+             VALUES ($1, $2, NOW() + INTERVAL '15 minutes')
+             ON CONFLICT (email) DO UPDATE SET otp_code = EXCLUDED.otp_code, expires_at = EXCLUDED.expires_at"
+        )
+        .bind(email)
+        .bind(otp)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// OTP kodunu doğrular ve hesabı aktifleştirir
+    pub async fn verify_otp(&self, email: &str, otp: &str) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT otp_code, expires_at FROM email_verifications WHERE email = $1"
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(r) = row {
+            let saved_otp: String = r.get("otp_code");
+            let expires_at: chrono::NaiveDateTime = r.get("expires_at");
+            
+            if saved_otp == otp && chrono::Utc::now().naive_utc() < expires_at {
+                // Doğrulandı, hesabı aktif et
+                sqlx::query("UPDATE users SET is_verified = TRUE WHERE email = $1")
+                    .bind(email)
+                    .execute(&self.pool)
+                    .await?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }

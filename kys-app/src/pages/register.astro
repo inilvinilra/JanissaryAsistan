@@ -1,6 +1,6 @@
 ---
 import '../styles/globals.css';
-import { LoginForm } from '../components/auth/LoginForm';
+import { RegisterForm } from '../components/auth/RegisterForm';
 ---
 
 <html lang="tr">
@@ -8,8 +8,7 @@ import { LoginForm } from '../components/auth/LoginForm';
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width" />
-		<title>KYS - Giriş Yap</title>
-		<meta name="description" content="KYS Jüri Sistemi - Güvenli Giriş" />
+		<title>KYS - Kayıt Ol</title>
 	</head>
 	<body class="bg-slate-100 text-slate-900 font-sans antialiased flex flex-col items-center justify-center min-h-screen">
     <div class="w-full max-w-sm px-4">
@@ -17,7 +16,7 @@ import { LoginForm } from '../components/auth/LoginForm';
         <h1 class="text-3xl font-bold text-slate-800">KYS</h1>
         <p class="text-slate-500 text-sm mt-1">Karar Yönetim Sistemi</p>
       </div>
-		  <LoginForm client:only="react" />
+		  <RegisterForm client:only="react" />
     </div>
 	</body>
 </html>

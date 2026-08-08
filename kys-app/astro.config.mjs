@@ -9,5 +9,10 @@ export default defineConfig({
       applyBaseStyles: false,
     }),
   ],
+  vite: {
+    server: {
+      open: false
+    }
+  },
   outDir: 'dist',
 });
