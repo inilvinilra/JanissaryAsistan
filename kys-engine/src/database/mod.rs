@@ -275,4 +275,72 @@ impl Database {
         }
         Ok(false)
     }
+
+    pub async fn get_project_details_full(&self, project_id: i64) -> Result<Option<(ProjectFullRecord, Option<ScoreRecord>, Vec<SimilarityRecord>)>> {
+        let p_row = sqlx::query("SELECT id, filename, created_at::text FROM projects WHERE id = $1")
+            .bind(project_id as i32)
+            .fetch_optional(&self.pool)
+            .await?;
+            
+        let p_row = match p_row {
+            Some(r) => r,
+            None => return Ok(None)
+        };
+        
+        let proj = ProjectFullRecord {
+            id: p_row.get("id"),
+            filename: p_row.get("filename"),
+            created_at: p_row.get("created_at"),
+        };
+        
+        let s_row = sqlx::query("SELECT category_fit, completeness, reference_quality, technical_depth, originality, total_score, grade FROM scores WHERE project_id = $1")
+            .bind(project_id as i32)
+            .fetch_optional(&self.pool)
+            .await?;
+            
+        let score = s_row.map(|r| ScoreRecord {
+            category_fit: r.get("category_fit"),
+            completeness: r.get("completeness"),
+            reference_quality: r.get("reference_quality"),
+            technical_depth: r.get("technical_depth"),
+            originality: r.get("originality"),
+            total_score: r.get("total_score"),
+            grade: r.get("grade"),
+        });
+        
+        let m_rows = sqlx::query("SELECT title, source_type, similarity_score FROM similarity_matches WHERE project_id = $1")
+            .bind(project_id as i32)
+            .fetch_all(&self.pool)
+            .await?;
+            
+        let matches = m_rows.into_iter().map(|r| SimilarityRecord {
+            title: r.get("title"),
+            source_type: r.get("source_type"),
+            similarity_score: r.get("similarity_score"),
+        }).collect();
+        
+        Ok(Some((proj, score, matches)))
+    }
+}
+
+pub struct ProjectFullRecord {
+    pub id: i32,
+    pub filename: String,
+    pub created_at: String,
+}
+
+pub struct ScoreRecord {
+    pub category_fit: f32,
+    pub completeness: f32,
+    pub reference_quality: f32,
+    pub technical_depth: f32,
+    pub originality: f32,
+    pub total_score: f32,
+    pub grade: String,
+}
+
+pub struct SimilarityRecord {
+    pub title: String,
+    pub source_type: String,
+    pub similarity_score: f32,
 }

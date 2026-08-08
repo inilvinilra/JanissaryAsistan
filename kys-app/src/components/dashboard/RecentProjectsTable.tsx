@@ -7,7 +7,7 @@ type Project = {
   title: string;
   category: string;
   author?: string;
-  score: number | null;
+  score?: any;
   grade: string;
   status: string;
 }
@@ -172,7 +172,7 @@ export function RecentProjectsTable() {
 }
 
 // Görseldeki bar chart (Sparkline) tasarımını taklit eden basit bileşen
-function Sparkline({ score }: { score: number | null }) {
+function Sparkline({ score }: any) {
   if (!score) return <div className="h-4 flex items-end gap-0.5"><div className="w-1.5 h-1 bg-muted"></div></div>
   
   // Sahte bir bar dizisi oluştur, skor ne kadar yüksekse barlar o kadar artan eğilime sahip olsun
@@ -186,7 +186,7 @@ function Sparkline({ score }: { score: number | null }) {
 
   return (
     <div className="h-4 flex items-end gap-0.5 opacity-80">
-      {bars.map((h, i) => (
+      {bars.map((h: number, i: number) => (
         <div key={i} className="w-1 bg-blue-500 rounded-t-[1px]" style={{ height: `${h}px` }} />
       ))}
     </div>

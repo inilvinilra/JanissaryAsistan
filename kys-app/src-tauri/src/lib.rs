@@ -1,7 +1,13 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+﻿// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod auth;
 
 use serde::Serialize;
+use tauri::Manager;
+use std::sync::Arc;
+use kys_engine::database::Database;
+use kys_engine::parser;
+use kys_engine::research;
+use kys_engine::analysis;
 
 #[derive(Serialize)]
 pub struct Project {
@@ -22,12 +28,6 @@ pub struct DashboardStats {
     risk_projects: String,
     risk_projects_trend: String,
 }
-
-use std::collections::HashMap;
-use std::sync::Mutex;
-use kys_engine::parser;
-use kys_engine::research;
-use kys_engine::analysis;
 
 #[derive(Serialize, Clone)]
 pub struct ScoreDetail {
@@ -66,123 +66,98 @@ pub struct ProjectDetail {
     pdf_url: Option<String>,
 }
 
-pub struct AppState {
-    pub projects: Mutex<HashMap<String, ProjectDetail>>,
+#[tauri::command]
+async fn get_recent_projects(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<Project>, String> {
+    let rows = db.list_projects().await.map_err(|e| e.to_string())?;
+    
+    let mut projects = Vec::new();
+    for (id, filename, score, grade) in rows {
+        projects.push(Project {
+            id: id.to_string(),
+            title: filename,
+            category: "Genel".into(), 
+            score: if score > 0.0 { Some(score as u32) } else { None },
+            grade: grade.clone(),
+            status: if score > 0.0 { "Tamamlandı".into() } else { "İnceleniyor".into() },
+        });
+    }
+    
+    Ok(projects)
 }
 
 #[tauri::command]
-fn get_recent_projects() -> Vec<Project> {
-    // Şimdilik test verisi dönüyoruz, ileride kys_engine::database üzerinden çekilecek
-    vec![
-        Project { id: "PRJ-2041".into(), title: "Görüntü İşleme ile Yüz Tanıma".into(), category: "Yapay Zeka".into(), score: Some(92), grade: "A".into(), status: "Tamamlandı".into() },
-        Project { id: "PRJ-2042".into(), title: "Otonom Tarım Robotu".into(), category: "Robotik".into(), score: Some(85), grade: "B+".into(), status: "Tamamlandı".into() },
-        Project { id: "PRJ-2043".into(), title: "Akıllı Ev Güvenlik Sistemi".into(), category: "Nesnelerin İnterneti".into(), score: Some(72), grade: "C".into(), status: "Uyarı: Benzerlik".into() },
-        Project { id: "PRJ-2044".into(), title: "Güneş Paneli Verimlilik Analizi".into(), category: "Enerji".into(), score: Some(45), grade: "F".into(), status: "Kopya İhtimali".into() },
-        Project { id: "PRJ-2045".into(), title: "Deprem Erken Uyarı Ağı".into(), category: "Afet Yönetimi".into(), score: None, grade: "-".into(), status: "İnceleniyor".into() },
-    ]
-}
-
-#[tauri::command]
-async fn analyze_project_pdf(file_path: String, state: tauri::State<'_, AppState>) -> Result<ProjectDetail, String> {
+async fn analyze_project_pdf(file_path: String, db: tauri::State<'_, Arc<Database>>) -> Result<ProjectDetail, String> {
     // 1. KYS-Engine ile PDF'i parse et
     let mut document = parser::parse_file(&file_path)
         .map_err(|e| format!("PDF okuma hatası: {}", e))?;
     
-    // 2. İnternet araştırması (Async)
+    // 2. DB'ye boş haliyle ekle (İnceleniyor durumuna geçmesi için)
+    let project_id = db.save_project(&document).await.map_err(|e| e.to_string())?;
+
+    // 3. İnternet araştırması (Async)
     let search_results = research::search_related_sources(&document.keywords, "")
         .await
-        .unwrap_or_default(); // Hata olursa boş geç
+        .unwrap_or_default(); 
         
-    // 3. Benzerlik analizi
+    // 4. Benzerlik analizi
     let similarity_result = analysis::compute_similarity(&document, &search_results);
     
-    // 4. Taksonomi ve Skorlama
-    // Rust tarafındaki assets yolu masaüstünde farklı olabilir, şimdilik statik bir fit veriyoruz
+    // 5. Taksonomi ve Skorlama
     let category_fit = 85.0; 
     let classified_category = Some("Yapay Zeka / Teknoloji".to_string());
     document.classified_category = classified_category.clone();
     
     let score = analysis::score_document(&document, category_fit, classified_category);
     
-    // Tauri Structlarına Mapleme
-    let matches: Vec<SimilarityMatch> = similarity_result.matches.into_iter().map(|m| {
-        SimilarityMatch {
-            title: m.title,
-            source_type: m.source_type,
-            similarity_score: m.similarity_score,
-        }
-    }).collect();
+    // 6. Sonuçları veritabanına kaydet
+    db.save_score(project_id, &score).await.map_err(|e| e.to_string())?;
+    db.save_similarity(project_id, &similarity_result).await.map_err(|e| e.to_string())?;
     
-    // Yeni ID üret
-    let id = format!("PRJ-{}", rand::random::<u16>() % 9000 + 1000);
-    let mut filename = std::path::Path::new(&file_path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    if filename.is_empty() { filename = "Yeni_Proje".into(); }
-    
-    let detail = ProjectDetail {
-        id: id.clone(),
-        title: filename,
-        category: document.classified_category.unwrap_or_else(|| "Bilinmiyor".into()),
-        author: "KYS Kullanıcısı".into(), // DB'den alınacak
-        submit_date: "Şu An".into(), // chrono kullanılabilir
-        status: "Yeni Analiz".into(),
-        score: ScoreDetail {
-            total: score.total() as u32,
-            grade: score.grade(),
-            category_fit: score.category_fit as u32,
-            completeness: score.completeness as u32,
-            reference_quality: score.reference_quality as u32,
-            technical_depth: score.technical_depth as u32,
-        },
-        similarity: SimilarityDetail {
-            overall_score: similarity_result.overall_score,
-            originality_label: similarity_result.originality_label().into(),
-            matches,
-        },
-        // tauri:// protokolü üzerinden okumak için
-        pdf_url: Some(format!("https://asset.localhost/{}", file_path.replace("\\", "/"))),
-    };
-    
-    // State'e kaydet
-    state.projects.lock().unwrap().insert(id.clone(), detail.clone());
-    
-    Ok(detail)
+    // 7. Oluşturulan kaydı tam detaylı modeliyle arayüze dön
+    get_project_details(project_id.to_string(), db).await
 }
 
 #[tauri::command]
-fn get_project_details(id: String, state: tauri::State<'_, AppState>) -> Result<ProjectDetail, String> {
-    let projects = state.projects.lock().unwrap();
-    if let Some(project) = projects.get(&id) {
-        Ok(project.clone())
-    } else {
-        // Bulunamazsa Mock veri dön, geliştirme için kolaylık
-        Ok(ProjectDetail {
-            id: id.clone(),
-            title: "Görüntü İşleme ile Yüz Tanıma (Örnek)".into(),
-            category: "Yapay Zeka".into(),
-            author: "Ahmet Yılmaz (Takım Kaptanı)".into(),
-            submit_date: "14 Mayıs 2026".into(),
-            status: "Tamamlandı".into(),
+async fn get_project_details(id: String, db: tauri::State<'_, Arc<Database>>) -> Result<ProjectDetail, String> {
+    let project_id = id.replace("PRJ-", "").parse::<i64>().map_err(|_| "Geçersiz ID formatı".to_string())?;
+    
+    let result = db.get_project_details_full(project_id).await.map_err(|e| e.to_string())?;
+    
+    if let Some((proj, score_opt, matches)) = result {
+        let score = score_opt.unwrap_or(kys_engine::database::ScoreRecord {
+            category_fit: 0.0, completeness: 0.0, reference_quality: 0.0,
+            technical_depth: 0.0, originality: 0.0, total_score: 0.0, grade: "-".into()
+        });
+        
+        let detail = ProjectDetail {
+            id: proj.id.to_string(),
+            title: proj.filename,
+            category: "Sistem".into(),
+            author: "KYS Kullanıcısı".into(), 
+            submit_date: proj.created_at,
+            status: if score.total_score > 0.0 { "Tamamlandı".into() } else { "İnceleniyor".into() },
             score: ScoreDetail {
-                total: 92,
-                grade: "A".into(),
-                category_fit: 95,
-                completeness: 88,
-                reference_quality: 90,
-                technical_depth: 96,
+                total: score.total_score as u32,
+                grade: score.grade.clone(),
+                category_fit: score.category_fit as u32,
+                completeness: score.completeness as u32,
+                reference_quality: score.reference_quality as u32,
+                technical_depth: score.technical_depth as u32,
             },
             similarity: SimilarityDetail {
-                overall_score: 0.12,
-                originality_label: "Özgünlük Yüksek (Özgün)".into(),
-                matches: vec![
-                    SimilarityMatch { title: "Yüz Tanıma Sistemleri".into(), source_type: "Akademik Makale".into(), similarity_score: 0.08 },
-                ],
+                overall_score: score.originality as f64 / 100.0, 
+                originality_label: "Analiz Edildi".into(), 
+                matches: matches.into_iter().map(|m| SimilarityMatch {
+                    title: m.title,
+                    source_type: m.source_type,
+                    similarity_score: m.similarity_score as f64,
+                }).collect()
             },
-            pdf_url: None,
-        })
+            pdf_url: None, // Tauri asset loading ile alınabilir
+        };
+        Ok(detail)
+    } else {
+        Err("Proje bulunamadı".to_string())
     }
 }
 
@@ -206,8 +181,24 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState {
-            projects: std::sync::Mutex::new(std::collections::HashMap::new()),
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::block_on(async move {
+                // Engine klasöründeki env dosyasını yüklemeyi dene
+                let _ = dotenvy::from_path("../../kys-engine/.env"); 
+                
+                // Yoksa Supabase env variable fallback
+                let db_url = std::env::var("DATABASE_URL")
+                    .unwrap_or_else(|_| "postgresql://postgres.fgwctkxmsaczqzvlbyol:Rick3429!%3F31@aws-0-eu-central-1.pooler.supabase.com:6543/postgres".into());
+                
+                if let Ok(db) = Database::new(&db_url).await {
+                    app_handle.manage(Arc::new(db));
+                    println!(">>> Veritabanı Tauri'ye başarıyla bağlandı! <<<");
+                } else {
+                    println!("!!! Veritabanı bağlantı hatası !!!");
+                }
+            });
+            Ok(())
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
