@@ -1,2 +1,11 @@
 *.md
 *.txt
+
+# Dashboard workspace artifacts
+frontend/node_modules/
+frontend/.astro/
+frontend/dist/
+frontend/.env
+backend/target/
+backend/uploads/
+backend/.env
