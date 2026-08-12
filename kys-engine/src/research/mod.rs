@@ -1,176 +1,251 @@
-// KYS - İnternet Araştırma Motoru (Federated Search)
-// GitHub ve Semantic Scholar API'lerini doğrudan kullanarak (API Key gerektirmez) kaynak bulur.
+// JanissaryAsistan - İnternet Araştırma Motoru
+// Serper.dev (Google tabanlı) ile akademik PDF, GitHub ve web araması yapar
 
 use crate::models::SearchResult;
 use anyhow::Result;
 use reqwest::Client;
-use serde::Deserialize;
 use std::time::Duration;
 use tracing::{info, warn};
 
-// Github API Response
-#[derive(Debug, Deserialize)]
-struct GithubResponse {
-    items: Option<Vec<GithubItem>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubItem {
-    html_url: String,
-    description: Option<String>,
-    name: String,
-}
-
-/// Anahtar kelimelere göre açık kaynak API'lerden araştırma yapar
+/// Anahtar kelimelere göre Serper.dev üzerinden araştırma yapar
 pub async fn search_related_sources(
     keywords: &[String],
-    _api_key: &str, // Artık API key kullanmıyoruz
+    _api_key: &str,
 ) -> Result<Vec<SearchResult>> {
-    // Jüri / Akademik proje olduğumuzu belirten özel User-Agent
     let client = Client::builder()
-        .timeout(Duration::from_secs(15))
-        .user_agent("KYS-Research-Engine/0.1 (T3/TUBITAK Academic Project Evaluation Bot)")
+        .timeout(Duration::from_secs(10))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .build()?;
 
+    // En önemli 3-5 keyword
+    let base_query = keywords.iter().take(4).cloned().collect::<Vec<_>>().join(" ");
+
+    let serper_key = std::env::var("SERPER_API_KEY").unwrap_or_default();
+    
     let mut all_results: Vec<SearchResult> = Vec::new();
 
-    // En önemli 3 keyword ile arama yap (Rate limitlere takılmamak için)
-    let search_terms: Vec<String> = keywords
-        .iter()
-        .take(3)
-        .cloned()
-        .collect();
+    if !serper_key.is_empty() {
+        info!("Serper.dev arama başlatılıyor: '{}'", base_query);
 
-    for keyword in &search_terms {
-        info!("Federated Search başlatılıyor: '{}'", keyword);
-        
-        // 1. GitHub Araması (Açık kaynak yazılım benzerlikleri için)
-        match search_github(&client, keyword).await {
+        // 1. PDF araması — filetype:pdf
+        let pdf_query = format!("{} filetype:pdf", base_query);
+        match search_serper(&client, &pdf_query, &serper_key, "pdf").await {
             Ok(results) => {
+                info!("Serper PDF: {} sonuç bulundu", results.len());
                 all_results.extend(results);
             }
-            Err(e) => {
-                warn!("GitHub Search hatası ('{}'): {}", keyword, e);
-            }
+            Err(e) => warn!("Serper PDF arama hatası: {}", e),
         }
-        // Hızlı istek atmamak için bekle
-        tokio::time::sleep(Duration::from_millis(1500)).await;
 
-        // 2. Semantic Scholar Araması (Akademik makale benzerlikleri için)
-        match search_scholar(&client, keyword).await {
+        // 2. GitHub araması
+        let gh_query = format!("{} site:github.com", base_query);
+        match search_serper(&client, &gh_query, &serper_key, "github").await {
             Ok(results) => {
+                info!("Serper GitHub: {} sonuç bulundu", results.len());
                 all_results.extend(results);
             }
-            Err(e) => {
-                warn!("Semantic Scholar Search hatası ('{}'): {}", keyword, e);
-            }
+            Err(e) => warn!("Serper GitHub arama hatası: {}", e),
         }
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // 3. Genel akademik arama
+        match search_serper(&client, &base_query, &serper_key, "web").await {
+            Ok(results) => {
+                info!("Serper Genel: {} sonuç bulundu", results.len());
+                all_results.extend(results);
+            }
+            Err(e) => warn!("Serper genel arama hatası: {}", e),
+        }
+
+    } else {
+        warn!("SERPER_API_KEY bulunamadı. DuckDuckGo fallback başlatılıyor.");
+        match search_duckduckgo_fallback(&client, &base_query).await {
+            Ok(results) => all_results.extend(results),
+            Err(e) => warn!("DuckDuckGo hatası: {}", e),
+        }
     }
 
     // Tekrar eden URL'leri kaldır
     all_results.dedup_by(|a, b| a.url == b.url);
 
-    info!("Toplam {} tekil akademik/yazılım kaynağı bulundu", all_results.len());
+    info!("Toplam {} tekil kaynak bulundu", all_results.len());
 
-    // Bulunan kaynakların (örneğin GitHub Readme veya Makale Özeti) içeriklerini topla
-    let mut fetched_results = Vec::new();
-    for mut result in all_results.into_iter().take(10) {
-        match fetch_content(&client, &result.url).await {
+    // İlk 8 sonucu paralel olarak içerik çek
+    let fetch_tasks: Vec<_> = all_results.into_iter().take(8).collect();
+
+    let fetch_futures: Vec<_> = fetch_tasks.iter().map(|result| {
+        let client = client.clone();
+        let url = result.url.clone();
+        let source_type = result.source_type.clone();
+        async move {
+            fetch_content(&client, &url, &source_type).await
+        }
+    }).collect();
+
+    let fetch_results = futures::future::join_all(fetch_futures).await;
+
+    let mut fetched = Vec::new();
+    for (mut result, fetch_out) in fetch_tasks.into_iter().zip(fetch_results.into_iter()) {
+        match fetch_out {
             Ok((status, content)) => {
                 result.http_status = status;
-                if status == 200 {
+                if status == 200 && !content.is_empty() {
                     result.fetched_content = Some(content);
-                    result.source_type = classify_source(&result.url);
-                    fetched_results.push(result);
+                    fetched.push(result);
+                } else if status == 200 && result.source_type == "pdf" {
+                    // PDF'ler için snippet'i içerik olarak kullan
+                    result.fetched_content = Some(result.snippet.clone());
+                    fetched.push(result);
                 } else {
-                    warn!("HTTP {}: {} - atlanıyor", status, result.url);
+                    warn!("HTTP {} veya boş içerik: {} - atlanıyor", status, result.url);
                 }
             }
-            Err(e) => {
-                warn!("Fetch hatası ({}): {} - atlanıyor", result.url, e);
-            }
+            Err(e) => warn!("Fetch hatası: {} — {}", result.url, e),
         }
     }
 
-    Ok(fetched_results)
+    Ok(fetched)
 }
 
-/// GitHub API'sine şifresiz sorgu atar
-async fn search_github(client: &Client, query: &str) -> Result<Vec<SearchResult>> {
-    let url = "https://api.github.com/search/repositories";
+/// Serper.dev API üzerinden arama yapar
+async fn search_serper(
+    client: &Client,
+    query: &str,
+    api_key: &str,
+    source_hint: &str,
+) -> Result<Vec<SearchResult>> {
+    let body = serde_json::json!({
+        "q": query,
+        "num": 5,
+        "gl": "tr",
+        "hl": "tr"
+    });
+
     let response = client
-        .get(url)
-        .query(&[("q", query), ("per_page", "3")])
+        .post("https://google.serper.dev/search")
+        .header("X-API-KEY", api_key)
+        .header("Content-Type", "application/json")
+        .json(&body)
         .send()
         .await?;
 
-    let status = response.status();
-    if status.is_success() {
-        let gh_resp: GithubResponse = response.json().await?;
-        let results = gh_resp.items.unwrap_or_default().into_iter().map(|item| {
-            SearchResult {
-                title: item.name,
-                url: item.html_url,
-                snippet: item.description.unwrap_or_default(),
-                source_type: "github".to_string(),
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!("Serper HTTP {}", response.status()));
+    }
+
+    let json: serde_json::Value = response.json().await?;
+    let mut results = Vec::new();
+
+    // Organik sonuçları parse et
+    if let Some(organic) = json.get("organic").and_then(|o| o.as_array()) {
+        for item in organic.iter().take(5) {
+            let url = item.get("link").and_then(|u| u.as_str()).unwrap_or_default().to_string();
+            let title = item.get("title").and_then(|t| t.as_str()).unwrap_or_default().to_string();
+            let snippet = item.get("snippet").and_then(|s| s.as_str()).unwrap_or_default().to_string();
+
+            if url.is_empty() { continue; }
+
+            // Kaynak tipini belirle
+            let source_type = if source_hint == "pdf" || url.ends_with(".pdf") {
+                "pdf"
+            } else if url.contains("github.com") || url.contains("githubusercontent.com") {
+                "github"
+            } else if url.contains("arxiv.org") || url.contains("semanticscholar.org") || url.contains("researchgate.net") {
+                "academic"
+            } else {
+                "web"
+            }.to_string();
+
+            results.push(SearchResult {
+                title,
+                url,
+                snippet,
+                source_type,
                 fetched_content: None,
                 http_status: 0,
-            }
-        }).collect();
-        Ok(results)
-    } else {
-        Err(anyhow::anyhow!("HTTP {}", status))
+            });
+        }
     }
+
+    Ok(results)
 }
 
-/// Semantic Scholar API'sine şifresiz akademik makale sorgusu atar
-async fn search_scholar(client: &Client, query: &str) -> Result<Vec<SearchResult>> {
-    let url = "https://api.semanticscholar.org/graph/v1/paper/search";
-    let response = client
-        .get(url)
-        .query(&[("query", query), ("limit", "3"), ("fields", "title,url,abstract")])
-        .send()
-        .await?;
+/// DuckDuckGo fallback (Serper key yoksa)
+async fn search_duckduckgo_fallback(client: &Client, query: &str) -> Result<Vec<SearchResult>> {
+    use scraper::{Html, Selector};
+    use urlencoding::encode;
 
-    let status = response.status();
-    if status.is_success() {
-        // Dinamik JSON parse
-        let parsed: serde_json::Value = response.json().await?;
-        let mut results = Vec::new();
-        
-        if let Some(data) = parsed.get("data").and_then(|d| d.as_array()) {
-            for item in data {
-                if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
-                    let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("Bilinmeyen Makale").to_string();
-                    let snippet = item.get("abstract").and_then(|a| a.as_str()).unwrap_or("").to_string();
-                    results.push(SearchResult {
-                        title,
-                        url: url.to_string(),
-                        snippet,
-                        source_type: "academic".to_string(),
-                        fetched_content: None,
-                        http_status: 0,
-                    });
-                }
+    let url = format!("https://html.duckduckgo.com/html/?q={}", encode(query));
+    let response = client.get(&url).send().await?;
+
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!("DuckDuckGo HTTP {}", response.status()));
+    }
+
+    let html_content = response.text().await?;
+    let document = Html::parse_document(&html_content);
+    let result_selector = Selector::parse(".result").unwrap();
+    let title_selector = Selector::parse(".result__title > a.result__url").unwrap();
+    let snippet_selector = Selector::parse(".result__snippet").unwrap();
+
+    let mut results = Vec::new();
+    for element in document.select(&result_selector).take(5) {
+        if let Some(t_el) = element.select(&title_selector).next() {
+            let raw_url = t_el.value().attr("href").unwrap_or("").to_string();
+            let title = t_el.text().collect::<Vec<_>>().join(" ");
+            let snippet = element.select(&snippet_selector).next()
+                .map(|s| s.text().collect::<Vec<_>>().join(" "))
+                .unwrap_or_default();
+
+            let clean_url = if raw_url.contains("uddg=") {
+                raw_url.split("uddg=").nth(1)
+                    .and_then(|s| s.split('&').next())
+                    .map(|s| urlencoding::decode(s).unwrap_or_default().to_string())
+                    .unwrap_or(raw_url)
+            } else {
+                raw_url
+            };
+
+            if !clean_url.is_empty() {
+                results.push(SearchResult {
+                    title: title.trim().to_string(),
+                    url: clean_url,
+                    snippet: snippet.trim().to_string(),
+                    source_type: "web".to_string(),
+                    fetched_content: None,
+                    http_status: 0,
+                });
             }
         }
-        Ok(results)
-    } else {
-        Err(anyhow::anyhow!("HTTP {}", status))
     }
+    Ok(results)
 }
 
-/// URL'den içerik çeker - hata yönetimiyle
-async fn fetch_content(client: &Client, url: &str) -> Result<(u16, String)> {
-    // PDF'ler için binary fetch - şimdilik atla
-    if url.ends_with(".pdf") {
-        return Ok((200, format!("[PDF kaynağı: {}]", url)));
+/// URL'den içerik çeker
+async fn fetch_content(client: &Client, url: &str, source_type: &str) -> Result<(u16, String)> {
+    // PDF — binary, snippet ile yetiniyoruz (ayrıca PDF URL'ini kaydediyoruz)
+    if source_type == "pdf" || url.ends_with(".pdf") {
+        return Ok((200, format!(
+            "[PDF KAYNAĞI] Bu PDF projende benzer içerik barındırıyor olabilir. Link: {}",
+            url
+        )));
     }
 
+    // GitHub — README çek (master veya main)
+    let fetch_url = if url.contains("github.com") && !url.contains("raw.githubusercontent.com") {
+        let parts: Vec<&str> = url.split("github.com/").collect();
+        if parts.len() == 2 {
+            let repo_path = parts[1].split('/').take(2).collect::<Vec<_>>().join("/");
+            format!("https://raw.githubusercontent.com/{}/master/README.md", repo_path)
+        } else {
+            url.to_string()
+        }
+    } else {
+        url.to_string()
+    };
+
     let response = client
-        .get(url)
-        .timeout(Duration::from_secs(10))
+        .get(&fetch_url)
+        .timeout(Duration::from_secs(8))
         .send()
         .await?;
 
@@ -180,52 +255,38 @@ async fn fetch_content(client: &Client, url: &str) -> Result<(u16, String)> {
         200 => {
             let text = response.text().await?;
             let clean = clean_html(&text);
-            let truncated: String = clean.chars().take(2000).collect();
-            Ok((200, truncated))
+            Ok((200, clean.chars().take(3000).collect()))
         }
-        404 => {
-            warn!("404 Not Found: {}", url);
+        404 if fetch_url.contains("/master/README.md") => {
+            // main branch dene
+            let main_url = fetch_url.replace("/master/README.md", "/main/README.md");
+            if let Ok(resp2) = client.get(&main_url).timeout(Duration::from_secs(6)).send().await {
+                if resp2.status().is_success() {
+                    let t = resp2.text().await?;
+                    return Ok((200, clean_html(&t).chars().take(3000).collect()));
+                }
+            }
             Ok((404, String::new()))
         }
-        403 => {
-            warn!("403 Forbidden: {} - log tutuldu", url);
-            Ok((403, String::new()))
-        }
-        429 => {
-            warn!("429 Too Many Requests: {} - 3s bekleniyor", url);
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            Ok((429, String::new()))
-        }
         code => {
-            warn!("Bilinmeyen HTTP {}: {}", code, url);
+            warn!("HTTP {}: {}", code, url);
             Ok((code, String::new()))
         }
     }
 }
 
-/// HTML taglerini temizler
+/// HTML tag'lerini temizler
 fn clean_html(html: &str) -> String {
     let tag_re = regex::Regex::new(r"<[^>]+>").unwrap();
-    let whitespace_re = regex::Regex::new(r"\s+").unwrap();
+    let ws_re = regex::Regex::new(r"\s+").unwrap();
     let no_tags = tag_re.replace_all(html, " ");
-    whitespace_re.replace_all(&no_tags, " ").trim().to_string()
+    ws_re.replace_all(&no_tags, " ").trim().to_string()
 }
 
-/// URL'e göre kaynak tipini sınıflandırır
+/// URL kaynak tipini sınıflandırır
 fn classify_source(url: &str) -> String {
-    if url.contains("arxiv.org") {
-        "academic".to_string()
-    } else if url.contains("github.com") {
-        "github".to_string()
-    } else if url.contains("semanticscholar.org") || url.contains("researchgate.net") {
-        "academic".to_string()
-    } else if url.contains("wikipedia.org") {
-        "encyclopedia".to_string()
-    } else if url.ends_with(".pdf") {
-        "pdf".to_string()
-    } else if url.contains("docs.") || url.contains("/docs/") || url.contains("documentation") {
-        "documentation".to_string()
-    } else {
-        "web".to_string()
-    }
+    if url.ends_with(".pdf") { return "pdf".to_string(); }
+    if url.contains("github.com") || url.contains("githubusercontent.com") { return "github".to_string(); }
+    if url.contains("arxiv.org") || url.contains("semanticscholar.org") || url.contains("researchgate.net") { return "academic".to_string(); }
+    "web".to_string()
 }

@@ -1,9 +1,6 @@
 ---
 import '../styles/globals.css';
-import { AuthGuard, LogoutButton, UserInfo } from '../components/auth/AuthGuard';
-import { ThemeToggle } from '../components/ui/theme-toggle';
-import { Sidebar } from '../components/dashboard/Sidebar';
-import { UploadsTable } from '../components/dashboard/UploadsTable';
+import { UploadsPage } from '../components/dashboard/UploadsPage';
 ---
 
 <html lang="tr">
@@ -11,82 +8,26 @@ import { UploadsTable } from '../components/dashboard/UploadsTable';
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width" />
-		<title>KYS - Yüklenenler</title>
+		<title>JanissaryAsistan - Yüklenenler</title>
+		<meta name="description" content="JanissaryAsistan - Yüklenen projeler listesi" />
 		<script is:inline>
-			const theme = (() => {
-				if (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) {
-					return localStorage.getItem('theme');
+			(function() {
+				var stored = typeof localStorage !== 'undefined' && localStorage.getItem('theme');
+				var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+				var isDark = stored === 'dark' || (!stored && prefersDark);
+				if (isDark) {
+					document.documentElement.classList.add('dark');
+					document.documentElement.style.backgroundColor = 'hsl(0 0% 2%)';
+					document.documentElement.style.color = 'hsl(0 0% 90%)';
+				} else {
+					document.documentElement.classList.remove('dark');
+					document.documentElement.style.backgroundColor = 'hsl(220 20% 97%)';
+					document.documentElement.style.color = 'hsl(222 30% 10%)';
 				}
-				if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-					return 'dark';
-				}
-				return 'theme-light';
 			})();
-		
-			if (theme === 'dark') {
-				document.documentElement.classList.add('dark');
-			} else {
-				document.documentElement.classList.remove('dark');
-			}
 		</script>
 	</head>
-	<body class="bg-background text-foreground font-sans antialiased overflow-hidden">
-    <AuthGuard client:only="react">
-      <div class="flex h-screen w-full">
-        <!-- Sidebar (Left Menu) -->
-        <Sidebar client:only="react" />
-        
-        <!-- Right Content Area -->
-        <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <!-- Top Header -->
-          <header class="h-16 border-b border-border bg-card/50 flex items-center px-6 justify-between shrink-0">
-            <div class="font-semibold text-lg text-muted-foreground flex items-center gap-2">
-              <span class="text-foreground">KYS</span> / Yüklenenler
-            </div>
-            <div class="flex items-center gap-4">
-              <UserInfo client:only="react" />
-              <ThemeToggle client:only="react" />
-              <LogoutButton client:only="react" />
-            </div>
-          </header>
-          
-          <!-- Scrollable Main Area -->
-          <main class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar bg-background">
-            <div class="max-w-[1200px] mx-auto">
-              
-              {/* Header section matching the screenshot style loosely */}
-              <div class="mb-8 flex items-center justify-between">
-                <div>
-                  <h1 class="text-2xl font-bold tracking-tight mb-1">Tasks (Yüklenenler)</h1>
-                  <p class="text-muted-foreground text-sm">Sisteme yüklenen tüm projelerin durum listesi.</p>
-                </div>
-              </div>
-
-              <div class="mb-6 flex items-center justify-between">
-                <div class="flex items-center space-x-2">
-                  <input type="text" placeholder="Filter tasks..." class="h-8 w-[250px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-                  <button class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-input bg-transparent shadow-sm hover:bg-accent hover:text-accent-foreground h-8 px-3 border-dashed">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 h-4 w-4"><circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
-                    Status
-                  </button>
-                  <button class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-input bg-transparent shadow-sm hover:bg-accent hover:text-accent-foreground h-8 px-3 border-dashed">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2 h-4 w-4"><circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
-                    Priority
-                  </button>
-                </div>
-                <div class="flex items-center space-x-2">
-                  <button class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 px-3">
-                    View
-                  </button>
-                </div>
-              </div>
-              
-              <UploadsTable client:only="react" />
-              
-            </div>
-          </main>
-        </div>
-      </div>
-    </AuthGuard>
+	<body class="bg-background text-foreground">
+    <UploadsPage client:only="react" />
 	</body>
 </html>

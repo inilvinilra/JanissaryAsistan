@@ -4,90 +4,181 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Light Mode — temiz ve net */
+    --background: 220 20% 97%;
+    --foreground: 222 30% 10%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
- 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
- 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
- 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
- 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
- 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
- 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --card-foreground: 222 30% 10%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
- 
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 30% 10%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 15% 92%;
+    --secondary-foreground: 222 30% 15%;
+
+    --muted: 220 15% 94%;
+    --muted-foreground: 220 10% 46%;
+
+    --accent: 220 15% 92%;
+    --accent-foreground: 222 30% 15%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 221 83% 53%;
+
     --radius: 0.5rem;
+
+    /* Grafik renkleri */
+    --chart-1: 221 83% 53%;
+    --chart-2: 262 52% 47%;
+    --chart-3: 160 60% 40%;
+    --chart-4: 36 89% 52%;
+    --chart-5: 346 77% 50%;
   }
- 
+
   .dark {
-    --background: 0 0% 3%;
-    --foreground: 0 0% 98%;
- 
+    /* 
+      Dark Mode — Pitch Black (Koyu siyah, yüksek kontrast)
+    */
+    --background: 0 0% 2%;
+    --foreground: 0 0% 90%;
+
     --card: 0 0% 6%;
-    --card-foreground: 0 0% 98%;
- 
+    --card-foreground: 0 0% 90%;
+
     --popover: 0 0% 6%;
-    --popover-foreground: 0 0% 98%;
- 
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
- 
-    --secondary: 0 0% 12%;
-    --secondary-foreground: 0 0% 98%;
- 
-    --muted: 0 0% 12%;
-    --muted-foreground: 0 0% 60%;
- 
-    --accent: 0 0% 12%;
-    --accent-foreground: 0 0% 98%;
- 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
- 
+    --popover-foreground: 0 0% 90%;
+
+    /* Primary: blue */
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 80%;
+
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 50%;
+
+    --accent: 0 0% 10%;
+    --accent-foreground: 0 0% 80%;
+
+    --destructive: 0 58% 38%;
+    --destructive-foreground: 0 0% 92%;
+
     --border: 0 0% 14%;
     --input: 0 0% 14%;
-    --ring: 0 0% 83.9%;
+    --ring: 217 80% 55%;
+
+    /* Grafik renkleri */
+    --chart-1: 217 75% 58%;
+    --chart-2: 262 45% 60%;
+    --chart-3: 160 50% 45%;
+    --chart-4: 36 75% 52%;
+    --chart-5: 346 60% 52%;
   }
 }
- 
+
 @layer base {
   * {
     border-color: hsl(var(--border));
   }
+  html {
+    /* Siyah ekran önleme: CSS değişkenleri resolve olmadan önce açık arka plan */
+    background-color: hsl(220 20% 97%);
+    color: hsl(222 30% 10%);
+  }
+  html.dark {
+    background-color: hsl(0 0% 2%);
+    color: hsl(0 0% 90%);
+  }
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
+    font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
 @layer utilities {
+  /* Scrollbar — ince ve subtle */
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
+    height: 4px;
   }
   .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: hsl(var(--muted));
-    border-radius: 4px;
+    background: hsl(var(--border));
+    border-radius: 99px;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground));
+    background: hsl(var(--muted-foreground) / 0.5);
+  }
+
+  /* 
+    Grade Badge sistemi — Artık arka plan kutusu yok, sadece renkli metin
+  */
+  .grade-a {
+    color: hsl(142 60% 55%);
+    font-weight: 700;
+  }
+  .grade-b {
+    color: hsl(217 70% 68%);
+    font-weight: 700;
+  }
+  .grade-c {
+    color: hsl(38 75% 62%);
+    font-weight: 700;
+  }
+  .grade-f {
+    color: hsl(0 65% 62%);
+    font-weight: 700;
+  }
+  .grade-none {
+    color: hsl(var(--muted-foreground));
+    font-weight: 700;
+  }
+
+  /* Light modda grade badge'ler (arka plansız) */
+  :root .grade-a {
+    color: hsl(142 60% 35%);
+  }
+  :root .grade-b {
+    color: hsl(217 70% 45%);
+  }
+  :root .grade-c {
+    color: hsl(38 80% 40%);
+  }
+  :root .grade-f {
+    color: hsl(0 70% 45%);
+  }
+  :root .grade-none {
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* Sidebar active state */
+  .sidebar-active {
+    background-color: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+  .dark .sidebar-active {
+    background-color: hsl(var(--primary) / 0.15);
+    color: hsl(217 91% 75%);
+  }
+
+  /* Fade-in animasyonu */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .fade-in {
+    animation: fadeIn 0.2s ease-out;
   }
 }

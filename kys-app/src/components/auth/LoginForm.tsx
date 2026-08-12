@@ -23,7 +23,7 @@ export function LoginForm() {
     const result = await signIn(email, password)
     setLoading(false)
     if (result.success) {
-      window.location.href = "/dashboard"
+      window.location.replace("/dashboard")
     } else {
       setError(result.message)
     }
@@ -70,7 +70,7 @@ export function LoginForm() {
     <Card className="w-full shadow-xl">
       <CardHeader>
         <CardTitle className="text-2xl">Jüri Girişi</CardTitle>
-        <CardDescription>KYS hesabınıza erişmek için bilgilerinizi girin.</CardDescription>
+        <CardDescription>JanissaryAsistan hesabınıza erişmek için bilgilerinizi girin.</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleLogin} className="flex flex-col gap-4">

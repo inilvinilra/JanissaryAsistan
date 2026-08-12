@@ -31,7 +31,7 @@ pub async fn send_verification_email(to_email: &str, otp: &str) -> Result<(), St
         .map_err(|_| "RESEND_API_KEY bulunamadı. Lütfen .env dosyanızı kontrol edin.".to_string())?;
 
     let html_content = format!(
-        "<h2>KYS Jüri Paneline Hoş Geldiniz!</h2>
+        "<h2>JanissaryAsistan Jüri Paneline Hoş Geldiniz!</h2>
          <p>Kayıt işleminizi tamamlamak için doğrulama kodunuz:</p>
          <h1 style='color: #4CAF50;'>{}</h1>
          <p>Bu kod 15 dakika geçerlidir.</p>",
@@ -41,7 +41,7 @@ pub async fn send_verification_email(to_email: &str, otp: &str) -> Result<(), St
     let payload = ResendEmailPayload {
         from: "onboarding@resend.dev".to_string(), // Resend Test Email
         to: vec![to_email.to_string()],
-        subject: "KYS Dashboard - E-posta Doğrulama Kodu".to_string(),
+        subject: "JanissaryAsistan Dashboard - E-posta Doğrulama Kodu".to_string(),
         html: html_content,
     };
 

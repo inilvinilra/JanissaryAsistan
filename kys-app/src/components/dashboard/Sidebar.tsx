@@ -1,118 +1,180 @@
-import React, { useState } from "react"
-import { 
-  Brain, Shield, Database, GraduationCap, Activity, 
-  Sigma, Atom, Bot, FlaskConical, Code, Leaf, Cpu, 
-  Menu, ChevronLeft, LayoutDashboard, Settings, FileUp, ListTodo
+import React, { useState, useEffect } from "react"
+import {
+  LayoutDashboard, Upload, ClipboardList, Settings,
+  ChevronLeft, ChevronRight, Folder, ChevronDown, BrainCircuit
 } from "lucide-react"
+import { supabase } from "@/lib/supabase"
+import logoImg from "@/assets/jannisary.png"
+import logoWhiteImg from "@/assets/beyaz.png"
 
-const categories = [
-  { name: "Veri Bilimi", icon: Database, color: "text-blue-500", active: true },
-  { name: "Yapay Zeka", icon: Brain, color: "text-purple-500", active: false },
-  { name: "Siber Güvenlik", icon: Shield, color: "text-red-500", active: false },
-  { name: "Eğitim Tech", icon: GraduationCap, color: "text-green-500", active: false },
-  { name: "Sağlık Tech", icon: Activity, color: "text-rose-500", active: false },
-  { name: "Matematik", icon: Sigma, color: "text-indigo-500", active: false },
-  { name: "Fizik/Kimya", icon: Atom, color: "text-yellow-500", active: false },
-  { name: "Robotik", icon: Bot, color: "text-orange-500", active: false },
-  { name: "Biyoloji", icon: FlaskConical, color: "text-teal-500", active: false },
-  { name: "Yazılım/Oyun", icon: Code, color: "text-cyan-500", active: false },
-  { name: "Tarım Tech", icon: Leaf, color: "text-emerald-500", active: false },
-  { name: "Donanım", icon: Cpu, color: "text-slate-500", active: false },
+type NavItem = {
+  label: string;
+  icon: any;
+  href: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
+  { label: "PDF Yükle", icon: Upload, href: "/import" },
+  { label: "Yüklenenler", icon: ClipboardList, href: "/uploads" },
+  { label: "Kategori & AI Yönetimi", icon: BrainCircuit, href: "/settings?tab=kategoriler" },
+  { label: "Ayarlar", icon: Settings, href: "/settings" },
 ]
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
+  const [categoriesOpen, setCategoriesOpen] = useState(false)
+  const [categories, setCategories] = useState<any[]>([])
+  const [projects, setProjects] = useState<any[]>([])
+  const [expandedCat, setExpandedCat] = useState<string | null>(null)
+  const currentPath = typeof window !== "undefined" ? window.location.pathname : ""
+
+  useEffect(() => {
+    async function loadData() {
+      // 1. Kategorileri çek
+      const { data: catData } = await supabase.from("evaluation_categories").select("id, name").order("name")
+      if (catData) setCategories(catData)
+      
+      // 2. Projeleri çek (başlık ve kategori)
+      try {
+        const res = await fetch("http://localhost:8080/api/projects")
+        if (res.ok) {
+           const json = await res.json()
+           if (json.status === "success") setProjects(Array.isArray(json.data) ? json.data : [])
+        } else {
+           // fallback to supabase if axum is not responding
+           const { data: projData } = await supabase.from("projects").select("id, filename, category")
+           if (projData) setProjects(Array.isArray(projData) ? projData : [])
+        }
+      } catch(e) {
+        const { data: projData } = await supabase.from("projects").select("id, filename, category")
+        if (projData) setProjects(Array.isArray(projData) ? projData : [])
+      }
+    }
+    loadData()
+  }, [])
 
   return (
-    <div className={`h-full bg-card border-r border-border transition-all duration-300 flex flex-col shrink-0 overflow-hidden ${collapsed ? 'w-20' : 'w-64'}`}>
-      
-      {/* Brand & Toggle */}
-      <div className="h-16 flex items-center justify-between px-4 border-b border-border shrink-0">
+    <aside className={`flex flex-col border-r border-border bg-card transition-all duration-300 shrink-0 ${collapsed ? "w-16" : "w-64"}`}>
+      {/* Logo */}
+      <div className={`h-20 flex items-center border-b border-border shrink-0 overflow-hidden ${collapsed ? "justify-center px-0" : "px-4 gap-2"}`}>
+        <img src={typeof logoImg === "string" ? logoImg : (logoImg as any).src} alt="Janissary Logo" className="h-16 w-auto object-contain shrink-0 dark:hidden" />
+        <img src={typeof logoWhiteImg === "string" ? logoWhiteImg : (logoWhiteImg as any).src} alt="Janissary Logo White" className="h-16 w-auto object-contain shrink-0 hidden dark:block" />
         {!collapsed && (
-          <div className="flex items-center gap-2 overflow-hidden">
-            <div className="w-8 h-8 rounded bg-primary text-primary-foreground flex items-center justify-center font-bold text-lg shrink-0">
-              K
-            </div>
-            <span className="font-bold text-lg whitespace-nowrap">KYS Engine</span>
+          <div className="flex-1 min-w-0">
+            <span className="text-base font-bold tracking-tight block truncate">JanissaryAsistan</span>
+            <span className="text-[11px] text-muted-foreground block font-medium truncate">Jüri Paneli</span>
           </div>
         )}
-        {collapsed && (
-          <div className="w-8 h-8 mx-auto rounded bg-primary text-primary-foreground flex items-center justify-center font-bold text-lg shrink-0">
-            K
+      </div>
+
+      {/* Navigasyon */}
+      <nav className="flex-1 p-2 flex flex-col gap-0.5 overflow-y-auto custom-scrollbar">
+        {NAV_ITEMS.map(item => {
+          const Icon = item.icon
+          const active = currentPath === item.href || currentPath.startsWith(item.href + "/")
+
+          return (
+            <a
+              key={item.href}
+              href={item.href}
+              title={collapsed ? item.label : undefined}
+              className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-medium transition-all duration-150
+                ${active
+                  ? "sidebar-active"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }
+                ${collapsed ? "justify-center" : ""}`}
+            >
+              <Icon className={`shrink-0 ${collapsed ? "w-5 h-5" : "w-4 h-4"}`} />
+              {!collapsed && <span className="truncate">{item.label}</span>}
+            </a>
+          )
+        })}
+
+        {/* Dinamik Kategoriler Menüsü */}
+        {categories.length > 0 && (
+          <div className="mt-1 flex flex-col gap-0.5">
+            <button
+              onClick={() => {
+                if (collapsed) setCollapsed(false);
+                setCategoriesOpen(!categoriesOpen);
+              }}
+              className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-medium transition-all duration-150 text-muted-foreground hover:bg-muted hover:text-foreground ${collapsed ? "justify-center" : ""}`}
+              title={collapsed ? "Kategoriler" : undefined}
+            >
+              <Folder className={`shrink-0 ${collapsed ? "w-5 h-5" : "w-4 h-4"}`} />
+              {!collapsed && (
+                <div className="flex flex-1 items-center justify-between">
+                  <span>Kategoriler</span>
+                  <ChevronDown className={`w-3 h-3 transition-transform ${categoriesOpen ? "rotate-180" : ""}`} />
+                </div>
+              )}
+            </button>
+            
+            {/* Alt Kategoriler Listesi */}
+            {(!collapsed && categoriesOpen) && (
+              <div className="pl-9 pr-2 py-1 flex flex-col gap-1">
+                {categories.map(cat => {
+                  const catProjects = projects.filter(p => p.category === cat.name)
+                  const isExpanded = expandedCat === cat.name
+                  
+                  return (
+                    <div key={cat.id} className="flex flex-col">
+                      <div className="flex items-center justify-between group">
+                        <a
+                          href={`/dashboard?category=${encodeURIComponent(cat.name)}`}
+                          className="flex-1 text-xs font-medium text-muted-foreground group-hover:text-foreground py-1.5 px-2 rounded-md transition-colors truncate"
+                        >
+                          {cat.name}
+                        </a>
+                        {catProjects.length > 0 && (
+                          <button
+                            onClick={(e) => { e.preventDefault(); setExpandedCat(isExpanded ? null : cat.name) }}
+                            className="p-1 rounded-md text-muted-foreground hover:bg-muted"
+                          >
+                            <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                          </button>
+                        )}
+                      </div>
+                      
+                      {/* Kategori İçi Projeler */}
+                      {isExpanded && catProjects.length > 0 && (
+                        <div className="pl-2 pr-1 py-1 flex flex-col gap-1 border-l border-border ml-2 mt-1">
+                          {catProjects.map(p => (
+                            <a
+                              key={p.id}
+                              href={`/project?id=PRJ-${p.id}`}
+                              className="text-[11px] text-muted-foreground/80 hover:text-foreground py-1 px-2 rounded hover:bg-muted/50 truncate transition-colors"
+                              title={p.filename || p.title}
+                            >
+                              {p.filename || p.title}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
-        <button 
+      </nav>
+
+      {/* Alt: collapse toggle */}
+      <div className="p-2 border-t border-border">
+        <button
           onClick={() => setCollapsed(!collapsed)}
-          className={`p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors ${collapsed ? 'mx-auto mt-4 absolute top-2 right-4' : ''}`}
+          className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-all ${collapsed ? "justify-center" : ""}`}
+          title={collapsed ? "Genişlet" : "Daralt"}
         >
-          {collapsed ? <Menu className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+          {collapsed
+            ? <ChevronRight className="w-4 h-4" />
+            : <><ChevronLeft className="w-4 h-4" /><span className="text-xs">Daralt</span></>
+          }
         </button>
       </div>
-
-      <div className="flex-1 overflow-y-auto custom-scrollbar py-6 flex flex-col gap-8">
-        
-        {/* Navigation */}
-        <div className="px-3">
-          {!collapsed && <h3 className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">KYS Sistemi</h3>}
-          <div className="space-y-1">
-            <a href="/dashboard" className="flex items-center gap-3 px-3 py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-              <LayoutDashboard className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="font-medium">Ana Dashboard</span>}
-            </a>
-            <a href="/import" className="flex items-center gap-3 px-3 py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-              <FileUp className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="font-medium">Proje Yükle</span>}
-            </a>
-            <a href="/uploads" className="flex items-center gap-3 px-3 py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-              <ListTodo className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="font-medium">Yüklenenler</span>}
-            </a>
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-              <Settings className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="font-medium">Ayarlar</span>}
-            </a>
-          </div>
-        </div>
-
-        {/* Categories (ALANLAR) */}
-        <div className="px-3">
-          {!collapsed && (
-            <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2 px-3">
-              Alanlar
-            </h4>
-          )}
-          <div className="space-y-0.5">
-            {categories.map((cat, idx) => {
-              const Icon = cat.icon
-              return (
-                <button 
-                  key={idx}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors group ${
-                    cat.active 
-                      ? "bg-primary/10 text-primary" 
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                  title={collapsed ? cat.name : undefined}
-                >
-                  <div className="flex items-center gap-3">
-                    <Icon className={`w-4 h-4 shrink-0 ${cat.active ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`} />
-                    {!collapsed && <span className="text-sm font-medium truncate">{cat.name}</span>}
-                  </div>
-                  {/* Count was removed, removing the badge */}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      </div>
-      
-      {/* Footer Nav */}
-      <div className="p-3 border-t border-border">
-        <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors hover:bg-muted text-muted-foreground">
-          <Settings className="w-5 h-5 shrink-0" />
-          {!collapsed && <span className="font-medium text-sm">Ayarlar</span>}
-        </button>
-      </div>
-    </div>
+    </aside>
   )
 }

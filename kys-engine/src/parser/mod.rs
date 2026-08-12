@@ -1,4 +1,4 @@
-// KYS - Dosya Ayrıştırma Motoru
+// JanissaryAsistan - Dosya Ayrıştırma Motoru
 // PDF, TXT, Markdown dosyalarını okur ve yapılandırılmış Document döndürür
 
 use crate::models::*;
@@ -89,6 +89,8 @@ fn analyze_text(filename: &str, file_type: FileType, raw_text: String) -> Result
         || lower.contains("references")
         || lower.contains("bibliography");
 
+    let author = extract_author(&normalized);
+
     Ok(Document {
         filename: Path::new(filename).file_name().unwrap_or_default().to_string_lossy().to_string(),
         file_type: file_type,
@@ -106,7 +108,25 @@ fn analyze_text(filename: &str, file_type: FileType, raw_text: String) -> Result
         has_methodology,
         language,
         sections,
+        author,
     })
+}
+
+/// PDF kapak/ilk sayfasından yazar veya takım kaptanını çıkarır
+fn extract_author(text: &str) -> Option<String> {
+    let first_page = text.chars().take(2000).collect::<String>();
+    
+    // Daha esnek Regex: iki nokta şart değil, yeni satır \n kabul ediyor, 1-4 kelimeli isimler
+    let re = regex::Regex::new(r"(?i)(?:takım kaptanı|hazırlayanlar|hazırlayan|yazar|danışman|öğrenci|takım üyeleri|proje sahibi|proje yürütücüsü)(?:[:\s\r\n]+)([A-ZÇĞIİÖŞÜ][a-zçğıiöşü]+(?:[ \t\r\n]+[A-ZÇĞIİÖŞÜ][a-zçğıiöşü]+){1,4})").unwrap();
+    
+    if let Some(caps) = re.captures(&first_page) {
+        let raw_name = caps[1].trim().to_string();
+        // İsimdeki alt satır ve fazla boşlukları temizle
+        let clean_name = regex::Regex::new(r"\s+").unwrap().replace_all(&raw_name, " ").to_string();
+        return Some(clean_name);
+    }
+    
+    None
 }
 
 /// Başlıkları tespit eder (büyük harfli satırlar, markdown #, numaralı bölümler)

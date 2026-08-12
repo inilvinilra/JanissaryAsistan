@@ -42,8 +42,11 @@ export async function signIn(email: string, password: string): Promise<AuthResul
   try {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) return { success: false, message: humanizeError(error) }
-    if (!data.user?.email_confirmed_at) {
-      await supabase.auth.signOut()
+    // E-posta doğrulaması kontrolü — signOut YAPMA, sadece hata dön
+    // signOut yapmak onAuthStateChange'de SIGNED_OUT ateşler ve dashboard crash eder
+    if (data.user && !data.user.email_confirmed_at) {
+      // Oturumu arka planda kapat (event tetiklemeden)
+      await supabase.auth.signOut({ scope: 'local' })
       return { success: false, message: 'E-posta adresiniz doğrulanmadı. Gelen kutunuzu kontrol edin.' }
     }
     return { success: true, message: 'Giriş başarılı!', data }

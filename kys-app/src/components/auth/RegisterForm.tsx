@@ -62,7 +62,7 @@ export function RegisterForm() {
     <Card className="w-full shadow-xl">
       <CardHeader>
         <CardTitle className="text-2xl">Hesap Oluştur</CardTitle>
-        <CardDescription>KYS sistemine kayıt olmak için bilgilerinizi girin.</CardDescription>
+        <CardDescription>JanissaryAsistan sistemine kayıt olmak için bilgilerinizi girin.</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleRegister} className="flex flex-col gap-4">

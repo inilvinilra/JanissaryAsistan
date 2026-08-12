@@ -1,6 +1,15 @@
 import React, { useState, useRef } from "react"
 import { tauriInvoke } from "@/lib/tauri"
-import { FileText, Loader2, CheckCircle2, AlertCircle } from "lucide-react"
+import { FileText, Loader2, CheckCircle2, AlertCircle, X, UploadCloud } from "lucide-react"
+
+type StagedFile = {
+  id: string;
+  path: string;
+  originalName: string;
+  title: string;
+  category: string;
+  file?: File;
+}
 
 type QueueItem = {
   id: string;
@@ -10,21 +19,78 @@ type QueueItem = {
   progress?: number;
 }
 
+const CATEGORIES = [
+  "Genel",
+  "İnsanlık Yararına Teknoloji",
+  "Eğitim Teknolojileri",
+  "Çevre ve Enerji Teknolojileri",
+  "Sağlık Teknolojileri",
+  "Ulaşım ve Mobilite Teknolojileri",
+  "Tarım Teknolojileri",
+  "Afet Yönetim Teknolojileri"
+];
+
 export function FileUploader() {
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const processFile = async (filePath: string, fileName: string) => {
-    const id = Math.random().toString(36).substr(2, 9)
-    setQueue(prev => [...prev, { id, name: fileName, status: "processing", progress: 0 }])
+  const processFile = async (staged: StagedFile) => {
+    const id = staged.id
+    setQueue(prev => [...prev, { id, name: staged.title, status: "processing", progress: 0 }])
     
     try {
-      const result = await tauriInvoke("analyze_project_pdf", { filePath })
-      setQueue(prev => prev.map(q => q.id === id ? { ...q, status: "done", resultId: result?.id, progress: 100 } : q))
+      if (staged.file) {
+        // Tarayıcıdan seçilmiş gerçek dosya varsa API'ye gönder
+        const formData = new FormData()
+        formData.append("file", staged.file)
+        formData.append("author", "Web Kullanıcısı")
+        // Backend şu an category ve title almıyor olabilir ama biz gönderelim
+        formData.append("title", staged.title)
+        
+        const res = await fetch("http://localhost:8080/api/analyze", {
+          method: "POST",
+          body: formData
+        })
+        
+        if (!res.ok) throw new Error("Yükleme başarısız")
+        const json = await res.json()
+        
+        if (json.status === "error") {
+            throw new Error(json.message || "Yükleme başarısız")
+        }
+        
+        setQueue(prev => prev.map(q => q.id === id ? { ...q, status: "done", resultId: json.data?.id, progress: 100 } : q))
+      } else {
+        // Tauri dialog fallback veya test
+        await tauriInvoke("upload_project_only", { 
+          filePath: staged.path,
+          title: staged.title,
+          category: staged.category
+        })
+        setQueue(prev => prev.map(q => q.id === id ? { ...q, status: "done", progress: 100 } : q))
+      }
     } catch (error) {
       setQueue(prev => prev.map(q => q.id === id ? { ...q, status: "error" } : q))
     }
+  }
+
+  const handleUploadAll = async () => {
+    if (stagedFiles.length === 0) return;
+    
+    // İşlem kuyruğunu hazırla ve dosyaları teker teker yükle
+    const filesToUpload = [...stagedFiles];
+    setStagedFiles([]); // Staged listesini temizle
+    
+    for (const file of filesToUpload) {
+      await processFile(file);
+    }
+    
+    // Yüklemeler bittikten 1.5 sn sonra Yüklenenler sayfasına git
+    setTimeout(() => {
+      window.location.href = "/uploads"
+    }, 1500);
   }
 
   const handleSelectFiles = async () => {
@@ -38,14 +104,20 @@ export function FileUploader() {
         
         if (selected) {
           const files = Array.isArray(selected) ? selected : [selected];
-          for (const path of files) {
-            // Basit dosya adı çıkarımı
+          const newStaged = files.map(path => {
             const name = path.split('\\').pop()?.split('/').pop() || "Bilinmeyen PDF";
-            processFile(path, name);
-          }
+            const title = name.replace(".pdf", "");
+            return {
+              id: Math.random().toString(36).substr(2, 9),
+              path,
+              originalName: name,
+              title,
+              category: "İnsanlık Yararına Teknoloji" // Default
+            }
+          });
+          setStagedFiles(prev => [...prev, ...newStaged]);
         }
       } else {
-        // Tarayıcı için Fallback: Gizli input tetikle
         fileInputRef.current?.click();
       }
     } catch (e) {
@@ -56,18 +128,32 @@ export function FileUploader() {
 
   const handleFallbackChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      Array.from(e.target.files).forEach(file => {
-        // Tarayıcıda tam dosya yolu alınamadığından mock için dosya adını kullanıyoruz
-        processFile(file.name, file.name);
+      const newStaged = Array.from(e.target.files).map(file => {
+        const title = file.name.replace(".pdf", "");
+        return {
+          id: Math.random().toString(36).substr(2, 9),
+          path: file.name, // Tarayıcıda tam yol alınamaz, sadece isim
+          originalName: file.name,
+          title,
+          category: "Belirtilmedi",
+          file // GERÇEK DOSYAYI KAYDET
+        }
       });
-      // inputu temizle
+      setStagedFiles(prev => [...prev, ...newStaged]);
       e.target.value = '';
     }
   }
 
+  const removeStaged = (id: string) => {
+    setStagedFiles(prev => prev.filter(f => f.id !== id));
+  }
+
+  const updateStaged = (id: string, field: "title" | "category", value: string) => {
+    setStagedFiles(prev => prev.map(f => f.id === id ? { ...f, [field]: value } : f));
+  }
+
   return (
     <div className="flex flex-col gap-8">
-      {/* Fallback Input */}
       <input 
         type="file" 
         multiple 
@@ -77,6 +163,7 @@ export function FileUploader() {
         onChange={handleFallbackChange} 
       />
 
+      {/* Sürükle Bırak Alanı */}
       <div 
         onClick={handleSelectFiles}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -85,19 +172,22 @@ export function FileUploader() {
           e.preventDefault();
           setIsDragging(false);
           if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            Array.from(e.dataTransfer.files).forEach(file => processFile(file.name, file.name));
+            const newStaged = Array.from(e.dataTransfer.files).map(file => ({
+              id: Math.random().toString(36).substr(2, 9),
+              path: file.name,
+              originalName: file.name,
+              title: file.name.replace(".pdf", ""),
+              category: "Belirtilmedi",
+              file // GERÇEK DOSYAYI KAYDET
+            }));
+            setStagedFiles(prev => [...prev, ...newStaged]);
           }
         }}
         className={`bg-card rounded-2xl border-2 border-dashed p-10 lg:p-14 flex flex-col items-center justify-center text-center transition-all cursor-pointer
           ${isDragging ? 'border-primary bg-primary/10 scale-[1.02]' : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/10'}`}
       >
         <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6">
-          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-            <polyline points="14 2 14 8 20 8" />
-            <path d="M12 12v6" />
-            <path d="m15 15-3-3-3 3" />
-          </svg>
+          <UploadCloud className="w-8 h-8 text-primary" />
         </div>
         
         <h3 className="text-xl font-semibold mb-2">PDF Dosyalarını Sürükleyin</h3>
@@ -109,11 +199,72 @@ export function FileUploader() {
         </button>
       </div>
 
+      {/* Hazırlık (Staging) Listesi */}
+      {stagedFiles.length > 0 && (
+        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden fade-in">
+          <div className="bg-muted/30 px-5 py-4 border-b border-border flex items-center justify-between">
+            <div>
+              <h4 className="font-semibold">Seçilen Dosyalar</h4>
+              <p className="text-xs text-muted-foreground mt-1">Yüklemeden önce başlık ve kategori belirleyebilirsiniz.</p>
+            </div>
+            <button 
+              onClick={handleUploadAll}
+              className="bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors"
+            >
+              Tümünü Yükle ({stagedFiles.length})
+            </button>
+          </div>
+          <ul className="divide-y divide-border">
+            {stagedFiles.map((file) => (
+              <li key={file.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-4 hover:bg-muted/5 transition-colors">
+                <div className="p-3 rounded-lg bg-primary/10 text-primary shrink-0 self-start sm:self-center">
+                  <FileText className="w-5 h-5" />
+                </div>
+                
+                <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+                  <div>
+                    <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">Proje Başlığı</label>
+                    <input 
+                      type="text" 
+                      value={file.title} 
+                      onChange={(e) => updateStaged(file.id, "title", e.target.value)}
+                      className="w-full bg-background border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-primary/50"
+                      placeholder="Başlık girin..."
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">Kategori</label>
+                    <select 
+                      value={file.category}
+                      onChange={(e) => updateStaged(file.id, "category", e.target.value)}
+                      className="w-full bg-background border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-primary/50"
+                    >
+                      <option value="">Belirtilmedi</option>
+                      {CATEGORIES.map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => removeStaged(file.id)}
+                  className="shrink-0 p-2 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors self-end sm:self-center"
+                  title="Listeden Çıkar"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Kuyruk (Queue) Listesi */}
       {queue.length > 0 && (
-        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden fade-in">
           <div className="bg-muted/30 px-5 py-3 border-b border-border flex items-center justify-between">
-            <h4 className="font-semibold text-sm">İşlem Kuyruğu</h4>
+            <h4 className="font-semibold text-sm">Yükleme Durumu</h4>
             <span className="text-xs bg-primary/20 text-primary px-2 py-1 rounded-md font-medium">
               {queue.filter(q => q.status === "processing").length} İşleniyor
             </span>
@@ -135,21 +286,12 @@ export function FileUploader() {
                       {item.status === 'done' && <CheckCircle2 className="w-3 h-3 text-green-500" />}
                       {item.status === 'error' && <AlertCircle className="w-3 h-3 text-red-500" />}
                       <span className="text-xs text-muted-foreground">
-                        {item.status === 'processing' ? 'KYS Motoru Analiz Ediyor...' : 
-                         item.status === 'done' ? 'Analiz Tamamlandı' : 'Hata Oluştu'}
+                        {item.status === 'processing' ? 'Veritabanına Yükleniyor...' : 
+                         item.status === 'done' ? 'Yükleme Tamamlandı' : 'Hata Oluştu'}
                       </span>
                     </div>
                   </div>
                 </div>
-                
-                {item.status === 'done' && item.resultId && (
-                  <a 
-                    href={`/project?id=${item.resultId}`} 
-                    className="text-xs bg-primary/10 text-primary hover:bg-primary/20 px-3 py-1.5 rounded-md font-medium transition-colors"
-                  >
-                    Detayı Gör
-                  </a>
-                )}
               </li>
             ))}
           </ul>

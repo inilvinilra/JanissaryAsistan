@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "kys-app",
+  "productName": "JanissaryAsistan",
   "version": "0.1.0",
-  "identifier": "com.emirh.kys-app",
+  "identifier": "com.emirh.janissaryasistan",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:4321",
@@ -12,9 +12,9 @@
   "app": {
     "windows": [
       {
-        "title": "kys-app",
-        "width": 800,
-        "height": 600
+        "title": "JanissaryAsistan",
+        "width": 1000,
+        "height": 700
       }
     ],
     "security": {

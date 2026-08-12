@@ -1,6 +1,6 @@
 ---
-import '../styles/globals.css';
-import { ProjectPage } from '../components/dashboard/ProjectPage';
+import '../../styles/globals.css';
+import { AiCategoriesPageWrapper } from '../../components/dashboard/AiCategoriesPageWrapper';
 ---
 
 <html lang="tr">
@@ -8,13 +8,13 @@ import { ProjectPage } from '../components/dashboard/ProjectPage';
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width" />
-		<title>JanissaryAsistan - Proje Detayı</title>
-		<meta name="description" content="JanissaryAsistan - Proje analiz detayları" />
+		<title>Kategori ve AI Yönetimi - JanissaryAsistan</title>
 		<script is:inline>
 			(function() {
 				var stored = typeof localStorage !== 'undefined' && localStorage.getItem('theme');
 				var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 				var isDark = stored === 'dark' || (!stored && prefersDark);
+				
 				if (isDark) {
 					document.documentElement.classList.add('dark');
 					document.documentElement.style.backgroundColor = 'hsl(0 0% 2%)';
@@ -28,6 +28,6 @@ import { ProjectPage } from '../components/dashboard/ProjectPage';
 		</script>
 	</head>
 	<body class="bg-background text-foreground">
-    <ProjectPage client:only="react" />
+    <AiCategoriesPageWrapper client:only="react" />
 	</body>
 </html>

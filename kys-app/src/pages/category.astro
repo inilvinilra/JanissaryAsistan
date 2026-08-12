@@ -1,6 +1,6 @@
 ---
 import '../styles/globals.css';
-import { ProjectPage } from '../components/dashboard/ProjectPage';
+import { UploadsPage } from '../components/dashboard/UploadsPage';
 ---
 
 <html lang="tr">
@@ -8,8 +8,8 @@ import { ProjectPage } from '../components/dashboard/ProjectPage';
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width" />
-		<title>JanissaryAsistan - Proje Detayı</title>
-		<meta name="description" content="JanissaryAsistan - Proje analiz detayları" />
+		<title>JanissaryAsistan - Kategori Projeleri</title>
+		<meta name="description" content="JanissaryAsistan - Kategoriye özel proje listesi" />
 		<script is:inline>
 			(function() {
 				var stored = typeof localStorage !== 'undefined' && localStorage.getItem('theme');
@@ -28,6 +28,6 @@ import { ProjectPage } from '../components/dashboard/ProjectPage';
 		</script>
 	</head>
 	<body class="bg-background text-foreground">
-    <ProjectPage client:only="react" />
+    <UploadsPage client:only="react" />
 	</body>
 </html>

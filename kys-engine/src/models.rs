@@ -1,4 +1,4 @@
-// KYS - Veri Modelleri
+// JanissaryAsistan - Veri Modelleri
 // Sistemin tüm katmanları bu yapıları kullanır
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,7 @@ pub struct Document {
     pub has_methodology: bool,
     pub language: Language,
     pub sections: Vec<Section>,
+    pub author: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +97,8 @@ pub struct ScoreCard {
     pub reference_quality: f64, // Kaynak kalitesi (0-100)
     pub technical_depth: f64,   // Teknik derinlik (0-100)
     pub originality: f64,       // Özgünlük (0-100, similarity'den gelir)
+    pub ai_probability: f64,    // Yapay Zeka ile üretilme ihtimali (0-100)
+    pub semantic_reason: Option<String>, // AI tarafından verilen anlamsal değerlendirme sebebi
 }
 
 impl ScoreCard {
@@ -134,6 +137,12 @@ impl ScoreCard {
         }
         if self.originality < 50.0 {
             reasons.push("Benzer çalışmalar bulundu".to_string());
+        }
+
+        if let Some(sr) = &self.semantic_reason {
+            if !sr.is_empty() {
+                reasons.push(format!("AI Notu: {}", sr));
+            }
         }
 
         if reasons.is_empty() {
