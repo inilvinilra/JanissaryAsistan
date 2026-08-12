@@ -182,3 +182,37 @@
     animation: fadeIn 0.2s ease-out;
   }
 }
+
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  
+  /* Sidebar and interactive elements should not be printed */
+  aside, .no-print, nav, button {
+    display: none !important;
+  }
+  
+  /* Ensure the main content uses full width */
+  .print-full-width {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Cards should have clean borders and avoid breaking inside */
+  .bg-card {
+    break-inside: avoid;
+    box-shadow: none !important;
+    border: 1px solid #ddd !important;
+    background-color: white !important;
+    color: black !important;
+  }
+  
+  /* Hide scrollbars during print */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+}

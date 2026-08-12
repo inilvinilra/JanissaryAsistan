@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { tauriInvoke } from "@/lib/tauri"
-import { ShieldAlert, CheckCircle2, AlertTriangle, FileText, ChevronLeft, File, Bot } from "lucide-react"
+import { ShieldAlert, CheckCircle2, AlertTriangle, FileText, ChevronLeft, File, Bot, Download } from "lucide-react"
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, Tooltip
@@ -85,23 +85,31 @@ export function ProjectDetailView() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full print-full-width">
       {/* Üst Bar / Geri Dön */}
-      <div className="mb-6 flex items-center gap-4">
-        <a href="/dashboard" className="p-2 bg-card border border-border rounded-lg hover:bg-muted transition-colors">
-          <ChevronLeft className="w-5 h-5" />
-        </a>
-        <div>
-          <h1 className="text-2xl font-bold">{data.title}</h1>
-          <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1">
-            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-xs font-semibold">{data.category}</span>
-            <span>ID: {data.id}</span>
-            <span>•</span>
-            <span>Gönderen: <strong className="text-foreground">{data.author}</strong></span>
-            <span>•</span>
-            <span>Tarih: {data.submit_date}</span>
+      <div className="mb-6 flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
+        <div className="flex items-center gap-4">
+          <a href="/dashboard" className="p-2 bg-card border border-border rounded-lg hover:bg-muted transition-colors no-print">
+            <ChevronLeft className="w-5 h-5" />
+          </a>
+          <div>
+            <h1 className="text-2xl font-bold">{data.title}</h1>
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mt-1">
+              <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-xs font-semibold">{data.category}</span>
+              <span>ID: {data.id}</span>
+              <span className="hidden sm:inline">•</span>
+              <span>Gönderen: <strong className="text-foreground">{data.author}</strong></span>
+              <span className="hidden sm:inline">•</span>
+              <span>Tarih: {data.submit_date}</span>
+            </div>
           </div>
         </div>
+        <button 
+          onClick={() => window.print()}
+          className="no-print flex items-center gap-2 h-9 px-4 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-semibold text-sm shrink-0 shadow-sm"
+        >
+          <Download className="w-4 h-4" /> Raporu İndir (PDF)
+        </button>
       </div>
 
       {/* İkiye Bölünmüş İçerik */}
