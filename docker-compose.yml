@@ -1,0 +1,79 @@
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: jury_assistant
+      POSTGRES_USER: jury
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jury -d jury_assistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - jury-postgres:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://jury:${POSTGRES_PASSWORD}@database:5432/jury_assistant
+      APP_ENV: production
+      FILE_ENCRYPTION_KEY: ${FILE_ENCRYPTION_KEY:?Set FILE_ENCRYPTION_KEY in .env}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Initial System Administrator}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?Set BOOTSTRAP_ADMIN_EMAIL in .env}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD in .env}
+      PUBLIC_FRONTEND_ORIGIN: ${PUBLIC_FRONTEND_ORIGIN:-http://localhost:4321}
+      SEED_SAMPLE_DATA: "false"
+      REQUIRE_TWO_FACTOR: "true"
+      VIRUS_SCAN_REQUIRED: "true"
+      OCR_LANGUAGES: ${OCR_LANGUAGES:-eng}
+      AI_SCORING_URL: ${AI_SCORING_URL:-}
+      AI_SCORING_TOKEN: ${AI_SCORING_TOKEN:-}
+      RUST_LOG: ${RUST_LOG:-backend=info}
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3000}
+    depends_on:
+      - backend
+    ports:
+      - "4321:80"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml:ro
+    depends_on:
+      - backend
+    ports:
+      - "9090:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    profiles: ["monitoring"]
+    environment:
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-http://127.0.0.1:65535/alerts}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        sed "s|__ALERT_WEBHOOK_URL__|$${ALERT_WEBHOOK_URL}|g" /etc/alertmanager/alertmanager.yml.template > /tmp/alertmanager.yml
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml
+    volumes:
+      - ./observability/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
+    ports:
+      - "9093:9093"
+
+volumes:
+  jury-postgres:

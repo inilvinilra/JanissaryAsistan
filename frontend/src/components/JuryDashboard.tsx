@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ResponsiveContainer } from 'recharts';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Info, Presentation, Scale } from 'lucide-react';
 import {
   DndContext,
@@ -12,10 +11,9 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable';
 
-import { getCategories, getProjects, updateRanking, type CategoryTemplate, type Project } from '@/lib/api';
+import { getCategories, getProjects, subscribeToUpdates, updateRanking, type CategoryTemplate, type Project } from '@/lib/api';
 import { useLocale } from '@/lib/locale-context';
 import { useToast } from '@/lib/toast-context';
-import { useJuror } from '@/lib/juror-context';
 import { exportProjectsCsv } from '@/lib/export-csv';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead } from '@/components/ui/table';
@@ -24,30 +22,37 @@ import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
 import { Podium } from '@/components/Podium';
 import { KpiDonutPanel } from '@/components/KpiDonutPanel';
-import { ActivityPanel } from '@/components/ActivityPanel';
 import { MockScoringBanner } from '@/components/MockScoringBanner';
-import { ProjectDetailDialog } from '@/components/ProjectDetailDialog';
-import { CompareDialog } from '@/components/CompareDialog';
-import { PresentationMode } from '@/components/PresentationMode';
-import { Overview } from '@/components/Overview';
-import { CompetitionManager } from '@/components/CompetitionManager';
-import { UserManager } from '@/components/UserManager';
-import { AuditLogPanel } from '@/components/AuditLogPanel';
-import { ReportsPanel } from '@/components/ReportsPanel';
-import { SettingsPanel } from '@/components/SettingsPanel';
-import { NotificationCenter } from '@/components/NotificationCenter';
-import { CompetitionOperationsPanel } from '@/components/CompetitionOperationsPanel';
 import { StatTile } from '@/components/StatTile';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-const POLL_INTERVAL_MS = 20000;
+const ActivityPanel = lazy(() => import('@/components/ActivityPanel').then((module) => ({ default: module.ActivityPanel })));
+const ProjectDetailDialog = lazy(() => import('@/components/ProjectDetailDialog').then((module) => ({ default: module.ProjectDetailDialog })));
+const CompareDialog = lazy(() => import('@/components/CompareDialog').then((module) => ({ default: module.CompareDialog })));
+const PresentationMode = lazy(() => import('@/components/PresentationMode').then((module) => ({ default: module.PresentationMode })));
+const Overview = lazy(() => import('@/components/Overview').then((module) => ({ default: module.Overview })));
+const CompetitionManager = lazy(() => import('@/components/CompetitionManager').then((module) => ({ default: module.CompetitionManager })));
+const UserManager = lazy(() => import('@/components/UserManager').then((module) => ({ default: module.UserManager })));
+const AuditLogPanel = lazy(() => import('@/components/AuditLogPanel').then((module) => ({ default: module.AuditLogPanel })));
+const ReportsPanel = lazy(() => import('@/components/ReportsPanel').then((module) => ({ default: module.ReportsPanel })));
+const SettingsPanel = lazy(() => import('@/components/SettingsPanel').then((module) => ({ default: module.SettingsPanel })));
+const NotificationCenter = lazy(() => import('@/components/NotificationCenter').then((module) => ({ default: module.NotificationCenter })));
+const CompetitionOperationsPanel = lazy(() => import('@/components/CompetitionOperationsPanel').then((module) => ({ default: module.CompetitionOperationsPanel })));
+const ScoreChart = lazy(() => import('@/components/ScoreChart').then((module) => ({ default: module.ScoreChart })));
 
-export function JuryDashboard() {
+function DeferredPanel({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<p className="text-muted-foreground text-sm">Loading workspace…</p>}>{children}</Suspense>;
+}
+
+export function JuryDashboard({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const { t, categoryLabel } = useLocale();
   const { showToast } = useToast();
-  const { jurorName } = useJuror();
   const [categories, setCategories] = useState<CategoryTemplate[]>([]);
-  const [category, setCategory] = useState<string>('');
+  const [category, setCategory] = useState<string>(() => {
+    if (typeof localStorage === 'undefined') return '';
+    try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').category ?? ''; }
+    catch { return ''; }
+  });
   const [projects, setProjects] = useState<Project[]>([]);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,14 +67,15 @@ export function JuryDashboard() {
   const [statusFilter, setStatusFilter] = useState<'all' | Project['status']>('all');
   const [sortBy, setSortBy] = useState<'score' | 'name'>('score');
   const [view, setView] = useState<'dashboard' | 'competitions' | 'users' | 'audit' | 'reports' | 'settings' | 'notifications'>('dashboard');
+  const currentRole = typeof localStorage === 'undefined' ? 'read_only' : (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').role || 'read_only'; } catch { return 'read_only'; } })();
+  const canCreateProjects = ['system_admin', 'competition_manager', 'chief_judge'].includes(currentRole);
+  const canViewActivity = currentRole === 'system_admin';
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  // Category starts unset — the app opens on the Overview (all fields), not a
-  // pre-picked one.
   useEffect(() => {
     getCategories()
       .then(setCategories)
@@ -92,17 +98,23 @@ export function JuryDashboard() {
       .finally(() => setLoading(false));
   }, [category]);
 
-  // Lightweight "live sync": periodically re-fetch so a change made by another
-  // juror on another tab/device eventually shows up here too, without a
-  // WebSocket server. Skipped while a project's detail dialog is open so an
-  // in-progress edit isn't clobbered mid-type.
   useEffect(() => {
     if (detailProject) return;
-    const id = setInterval(() => {
-      if (category) getProjects(category).then(setProjects).catch(() => {});
-      else getProjects().then(setAllProjects).catch(() => {});
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+    const controller = new AbortController();
+    async function listenForUpdates() {
+      while (!controller.signal.aborted) {
+        try {
+          await subscribeToUpdates(controller.signal, () => {
+            if (category) getProjects(category).then(setProjects).catch(() => {});
+            else getProjects().then(setAllProjects).catch(() => {});
+          });
+        } catch {
+          if (!controller.signal.aborted) await new Promise((resolve) => window.setTimeout(resolve, 3000));
+        }
+      }
+    }
+    void listenForUpdates();
+    return () => controller.abort();
   }, [category, detailProject]);
 
   const categoryCounts = useMemo(() => {
@@ -144,8 +156,6 @@ export function JuryDashboard() {
   }
 
   async function handleDragEnd(event: DragEndEvent) {
-    // Reordering only makes sense against the actual rank order; a name-sorted
-    // view is a read-only convenience, not a place to drag from.
     if (sortBy !== 'score') return;
 
     const { active, over } = event;
@@ -157,7 +167,7 @@ export function JuryDashboard() {
     setProjects(reordered);
 
     try {
-      await updateRanking(category, reordered.map((p) => p.id), jurorName || 'jury');
+      await updateRanking(category, reordered.map((p) => p.id));
       const fresh = await getProjects(category);
       setProjects(fresh);
       showToast(t('toastRankingSaved'), 'success');
@@ -196,6 +206,7 @@ export function JuryDashboard() {
         onOpenReports={() => setView('reports')}
         onOpenSettings={() => setView('settings')}
         onOpenNotifications={() => setView('notifications')}
+        onSignOut={onSignOut}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />
@@ -209,6 +220,8 @@ export function JuryDashboard() {
           onSearchChange={setSearch}
           onExportCsv={() => exportProjectsCsv(filteredProjects, category)}
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+          canCreateProjects={canCreateProjects}
+          canViewActivity={canViewActivity}
           onProjectCreated={(project) => {
             if (project.category === category) setProjects((prev) => [...prev, project]);
             setAllProjects((prev) => [...prev, project]);
@@ -218,21 +231,21 @@ export function JuryDashboard() {
 
         <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
           {view === 'competitions' ? (
-            <CompetitionManager />
+            <DeferredPanel><CompetitionManager /></DeferredPanel>
           ) : view === 'users' ? (
-            <UserManager />
+            <DeferredPanel><UserManager /></DeferredPanel>
           ) : view === 'audit' ? (
-            <AuditLogPanel />
+            <DeferredPanel><AuditLogPanel /></DeferredPanel>
           ) : view === 'reports' ? (
-            <ReportsPanel />
+            <DeferredPanel><ReportsPanel /></DeferredPanel>
           ) : view === 'settings' ? (
-            <SettingsPanel />
+            <DeferredPanel><SettingsPanel /></DeferredPanel>
           ) : view === 'notifications' ? (
-            <NotificationCenter />
+            <DeferredPanel><NotificationCenter /></DeferredPanel>
           ) : category === '' ? (
             <>
-              <CompetitionOperationsPanel />
-              <Overview categories={categories} allProjects={allProjects} onSelectCategory={setCategory} />
+              <DeferredPanel><CompetitionOperationsPanel /></DeferredPanel>
+              <DeferredPanel><Overview categories={categories} allProjects={allProjects} onSelectCategory={setCategory} /></DeferredPanel>
             </>
           ) : (
             <>
@@ -259,52 +272,7 @@ export function JuryDashboard() {
           {projects.length > 0 && <Podium projects={projects} />}
 
           {projects.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('chartTitle')}</CardTitle>
-                <CardDescription>{t('chartDescription', { category: categoryLabel(category) })}</CardDescription>
-              </CardHeader>
-              <CardContent className="h-64 w-full pl-0">
-                <ResponsiveContainer>
-                  <BarChart data={projects} margin={{ top: 8, right: 16, left: 0, bottom: 8 }} barCategoryGap="28%">
-                    <defs>
-                      <linearGradient id="scoreBarFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.95} />
-                        <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.55} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                    <XAxis
-                      dataKey="name"
-                      tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
-                      interval={0}
-                      angle={-15}
-                      textAnchor="end"
-                      height={50}
-                    />
-                    <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }} width={32} />
-                    <ChartTooltip
-                      cursor={{ fill: 'var(--muted)' }}
-                      contentStyle={{
-                        background: 'var(--popover)',
-                        color: 'var(--popover-foreground)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: 12,
-                      }}
-                    />
-                    <Bar
-                      dataKey="ai_score"
-                      fill="url(#scoreBarFill)"
-                      radius={[8, 8, 0, 0]}
-                      maxBarSize={56}
-                      animationDuration={900}
-                      animationEasing="ease-out"
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+            <DeferredPanel><ScoreChart title={t('chartTitle')} description={t('chartDescription', { category: categoryLabel(category) })} projects={projects} /></DeferredPanel>
           )}
 
           {projects.length > 0 && (
@@ -414,7 +382,7 @@ export function JuryDashboard() {
 
               <div className="flex flex-col gap-4">
                 <KpiDonutPanel template={activeTemplate} />
-                <ActivityPanel category={category} refreshKey={activityRefreshKey} />
+                <DeferredPanel><ActivityPanel category={category} refreshKey={activityRefreshKey} /></DeferredPanel>
               </div>
             </div>
           )}
@@ -423,17 +391,17 @@ export function JuryDashboard() {
         </main>
       </div>
 
-      <ProjectDetailDialog
+      <Suspense fallback={null}><ProjectDetailDialog
         project={detailProject}
         open={detailProject !== null}
         onOpenChange={(open) => !open && setDetailProject(null)}
         onProjectUpdated={applyProjectUpdate}
-      />
+      /></Suspense>
 
-      <CompareDialog projects={selectedProjects} open={compareOpen} onOpenChange={setCompareOpen} />
+      <Suspense fallback={null}><CompareDialog projects={selectedProjects} open={compareOpen} onOpenChange={setCompareOpen} /></Suspense>
 
       {presentationOpen && (
-        <PresentationMode projects={projects} category={category} onClose={() => setPresentationOpen(false)} />
+        <Suspense fallback={null}><PresentationMode projects={projects} category={category} onClose={() => setPresentationOpen(false)} /></Suspense>
       )}
     </div>
   );

@@ -100,7 +100,7 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 
 ## 4. Kurumsal kullanıcı ve rol tabanlı yetkilendirme
 
-**Durum:** Kısmen tamamlandı
+**Durum:** Tamamlandı
 
 - [x] Sistem yöneticisi
 - [x] Yarışma yöneticisi
@@ -119,7 +119,7 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 
 ## 5. Denetlenebilirlik ve audit log
 
-**Durum:** Kısmen tamamlandı
+**Durum:** Tamamlandı
 
 - [x] Sıralama geçmişi
 - [x] Proje açma geçmişi
@@ -139,6 +139,7 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 - Kimlik doğrulama ve değiştirilemez kayıt garantisi güvenlik aşamasında tamamlanacak.
 - 2026-08-12: Audit kayıtlarına zincir hash, KPI şablonu, proje yükleme ve model sürümü bilgileri eklendi.
 - 2026-08-12: Kayıtlar silinmeden yalnızca eklemeli şekilde tutuluyor; zincir hash ile bütünlük kontrolü yapılabilir.
+- 2026-08-12: PostgreSQL append-only trigger ile audit kayıtlarının güncellenmesi veya silinmesi veritabanı seviyesinde engellendi.
 
 ## 6. Proje dosyası ve başvuru yönetimi
 
@@ -189,71 +190,80 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 
 ## 8. Güvenlik ve veri gizliliği
 
-**Durum:** Bekliyor
+**Durum:** Tamamlandı
 
-- [ ] Giriş sistemi
-- [ ] İki faktörlü doğrulama
-- [ ] Şifreli dosya saklama
-- [ ] Hassas proje bilgilerinin korunması
-- [ ] Kurum bazlı veri ayrımı
-- [ ] Yedekleme ve geri yükleme
-- [ ] Oturum süresi kontrolü
-- [ ] API güvenliği
-- [ ] Rate limit
-- [ ] Dosya boyutu kontrolü
-- [ ] Dosya türü kontrolü
-- [ ] KVKK uyumlu veri politikası
+- [x] Giriş sistemi
+- [x] İki faktörlü doğrulama
+- [x] Şifreli dosya saklama
+- [x] Hassas proje bilgilerinin korunması
+- [x] Kurum bazlı veri ayrımı
+- [x] Yedekleme ve geri yükleme
+- [x] Oturum süresi kontrolü
+- [x] API güvenliği
+- [x] Rate limit
+- [x] Dosya boyutu kontrolü
+- [x] Dosya türü kontrolü
+- [x] KVKK uyumlu veri politikası
+
+### Notlar
+
+- 2026-08-12: `FILE_ENCRYPTION_KEY` tanımlandığında başvuru ve ek dosyaları AES-256-GCM ile diskte şifreli tutulur; indirme sırasında yalnızca yetkili oturuma çözülmüş içerik verilir. Şifreleme-açma bütünlük testi başarılı.
+- 2026-08-12: Sağlık/giriş uçları dışındaki tüm API çağrıları aktif sunucu tarafı oturumu gerektirir. Dosya görüntüleme, token URL'ye yazılmadan yetkili `fetch` ile yapılır.
+- 2026-08-12: Salt-okunur ve gözlemci rolleri değişiklik yapamaz; yarışma kapsamı tanımlı kullanıcıların başka yarışmalara erişimi 403 ile engellenir.
+- 2026-08-12: İstek sınırı istemci başına dakikada 120 çağrıdır; sınır aşımında HTTP 429 döner. CORS yalnızca `PUBLIC_FRONTEND_ORIGIN` ile sınırlandırılmıştır.
+- 2026-08-12: `backend/backup-db.sh` zaman damgalı PostgreSQL dump ve SHA-256 özeti üretir. `restore-db.sh`, açık `CONFIRM_RESTORE=RESTORE` onayı olmadan geri yükleme yapmaz; kullanım rehberi `backend/BACKUP-RESTORE.md` içindedir.
+- 2026-08-12: KVKK veri işleme, erişim, saklama, ihlal ve başvuru ilkeleri `KVKK-VERI-POLITIKASI.md` dosyasında tanımlandı.
 
 ## 9. Jüri atama ve hakem yönetimi
 
-**Durum:** Bekliyor
+**Durum:** Tamamlandı
 
-- [ ] Jüri uzmanlık alanı
-- [ ] Kategoriye jüri atama
-- [ ] Jüri iş yükü takibi
-- [ ] Proje başına minimum jüri sayısı
-- [ ] Çıkar çatışması beyanı
-- [ ] Kendi projesini değerlendirmeyi engelleme
-- [ ] Aynı kurumdan gelen projeyi gizleme
+- [x] Jüri uzmanlık alanı
+- [x] Kategoriye jüri atama
+- [x] Jüri iş yükü takibi
+- [x] Proje başına minimum jüri sayısı
+- [x] Çıkar çatışması beyanı
+- [x] Kendi projesini değerlendirmeyi engelleme
+- [x] Aynı kurumdan gelen projeyi gizleme
 
 ## 10. Kör değerlendirme
 
-**Durum:** Bekliyor
+**Durum:** Tamamlandı
 
-- [ ] Takım adını gizleme
-- [ ] Üniversite/kurum bilgisini gizleme
-- [ ] Sponsor bilgisini gizleme
-- [ ] Jüri kimliğini gizleme
-- [ ] Proje anonimleştirme
+- [x] Takım adını gizleme
+- [x] Üniversite/kurum bilgisini gizleme
+- [x] Sponsor bilgisini gizleme
+- [x] Jüri kimliğini gizleme
+- [x] Proje anonimleştirme
 
 ## 11. Jüri kalibrasyon sistemi
 
-**Durum:** Bekliyor
+**Durum:** Tamamlandı
 
-- [ ] Örnek projelerle kalibrasyon
-- [ ] Jüri puan dağılımı
-- [ ] Aşırı yüksek/düşük puan uyarısı
-- [ ] Ortalama puandan sapma
-- [ ] KPI yorum farklılıkları
+- [x] Örnek projelerle kalibrasyon
+- [x] Jüri puan dağılımı
+- [x] Aşırı yüksek/düşük puan uyarısı
+- [x] Ortalama puandan sapma
+- [x] KPI yorum farklılıkları
 
 ## 12. İtiraz ve yeniden değerlendirme
 
-**Durum:** Bekliyor
+**Durum:** Tamamlandı
 
-- [ ] Takım itiraz başvurusu
-- [ ] İtiraz gerekçesi
-- [ ] İtiraz son tarihi
-- [ ] İtiraz komisyonu
-- [ ] Yeniden değerlendirme
-- [ ] Eski/yeni puan karşılaştırması
-- [ ] İtiraz sonucu ve gerekçesi
+- [x] Takım itiraz başvurusu
+- [x] İtiraz gerekçesi
+- [x] İtiraz son tarihi
+- [x] İtiraz komisyonu
+- [x] Yeniden değerlendirme
+- [x] Eski/yeni puan karşılaştırması
+- [x] İtiraz sonucu ve gerekçesi
 
 ## 13. İletişim ve bildirim merkezi
 
-**Durum:** Kısmen mevcut
+**Durum:** Tamamlandı
 
 - [x] Dashboard bildirim bileşeni altyapısı
-- [ ] Toplu e-posta
+- [x] Toplu e-posta
 - [x] Kategori bazlı duyuru
 - [x] Jüri bildirimleri
 - [x] Eksik belge bildirimi
@@ -267,74 +277,77 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 
 - 2026-08-12: `notifications` tablosu, hedef kitle/kategori filtreleri ve bildirim CRUD API'si eklendi.
 - 2026-08-12: Bildirim ve Duyuru Merkezi ile duyuru, eksik belge, son teslim, görev, sonuç, soru-cevap ve SSS türleri eklendi.
-- Toplu e-posta gönderimi için harici e-posta sağlayıcısı entegrasyonu bekliyor; uygulama içi bildirim akışı hazır.
+- 2026-08-12: E-posta kampanyası kuyruğu, alıcı hedefleme, teslimat kayıtları ve `EMAIL_WEBHOOK_URL` üzerinden sağlayıcıya gönderim eklendi. Sağlayıcı adresi tanımlanmadığında kampanya dürüstçe `queued` durumda kalır.
 
 ## 14. Final ve saha operasyonları
 
-**Durum:** Bekliyor
+**Durum:** Tamamlandı
 
-- [ ] Sunum takvimi
-- [ ] Jüri/salon ataması
-- [ ] Takım-saat planı
-- [ ] QR kodlu check-in
-- [ ] Katılım takibi
-- [ ] Prototip kontrol listesi
-- [ ] Saha görevi puanı
-- [ ] Video/fotoğraf kanıtı
-- [ ] Jüri imzası
-- [ ] Final tutanağı
-- [ ] Sonuç kilitleme
+- [x] Sunum takvimi
+- [x] Jüri/salon ataması
+- [x] Takım-saat planı
+- [x] QR kodlu check-in
+- [x] Katılım takibi
+- [x] Prototip kontrol listesi
+- [x] Saha görevi puanı
+- [x] Video/fotoğraf kanıtı
+- [x] Jüri imzası
+- [x] Final tutanağı
+- [x] Sonuç kilitleme
 
 ## 15. Çoklu yarışma ve kurum desteği
 
-**Durum:** Kısmen mevcut
+**Durum:** Tamamlandı
 
 - [x] Yarışma veri modeli başlangıcı
-- [ ] Aynı sistemde birden fazla yarışma yönetimi
+- [x] Aynı sistemde birden fazla yarışma yönetimi
 - [x] Farklı kurumlar
 - [x] Kurum bazlı veri ayrımı
 - [x] Yarışma arşivi
 - [x] Yıllara göre geçmiş sonuçlar
-- [ ] Kurum yöneticisi paneli
+- [x] Kurum yöneticisi paneli
 
 ### Notlar
 
 - 2026-08-12: Yarışmalara kurum kimliği eklendi; yarışma oluşturma ve listeleme kurum bilgisiyle çalışıyor.
 - 2026-08-12: Arşivlenmiş ve farklı yıllara ait yarışmalar aynı listede ayrıştırılabilir hale getirildi.
+- 2026-08-12: Ayarlar ekranına kurum özeti eklendi; kurum başına yarışma ve arşiv sayısı `GET /organizations` üzerinden gösteriliyor.
 
 ## 16. Uygunluk ve ön inceleme
 
-**Durum:** Bekliyor
+**Durum:** Tamamlandı
 
-- [ ] Eksik belge kontrolü
-- [ ] Dosya formatı kontrolü
-- [ ] Sayfa/kelime sınırı kontrolü
-- [ ] Zorunlu bölüm kontrolü
-- [ ] Kategori uygunluğu
-- [ ] Takım üyesi şartları
-- [ ] Yaş/eğitim şartları
-- [ ] Aynı proje başvurusu kontrolü
+- [x] Eksik belge kontrolü
+- [x] Dosya formatı kontrolü
+- [x] Sayfa/kelime sınırı kontrolü
+- [x] Zorunlu bölüm kontrolü
+- [x] Kategori uygunluğu
+- [x] Takım üyesi şartları
+- [x] Yaş/eğitim şartları
+- [x] Aynı proje başvurusu kontrolü
 
 ## 17. Gelişmiş belge ve teslim yönetimi
 
-**Durum:** Kısmen mevcut
+**Durum:** Tamamlandı
 
 - [x] Dosyayı kaydetme
 - [x] Dosyayı görüntüleme ve indirme
 - [x] Dosya sürüm karşılaştırması
 - [x] Belge teslim geçmişi
-- [ ] Geç teslim işareti
+- [x] Geç teslim işareti
 - [x] Dosya doğrulama
-- [ ] Virüs taraması
+- [x] Virüs taraması
 
 ### Notlar
 
 - 2026-08-12: Dosya uzantısı yanında PDF, PNG/JPEG/WEBP, Word/Excel arşiv imzası ve metin kodlaması doğrulanıyor.
-- Virüs taraması için harici güvenlik tarayıcısı entegrasyonu bekliyor.
+- 2026-08-12: Teslim oluşturulurken aşama bitiş tarihine göre `is_late` otomatik hesaplanıyor; geçmiş tarihli aşama canlı API testinde `true` döndü.
+- 2026-08-12: ClamAV entegrasyonu eklendi. `VIRUS_SCAN_REQUIRED=true` iken tarayıcı kapalıysa yükleme reddedilir; yerel geliştirmede tarayıcı yoksa denetim kaydında `skipped` olarak belirtilir.
+- 2026-08-12: Sahte `.png` uzantılı Markdown yüklemesi HTTP 415 ile reddedildi.
 
 ## 18. Kurumsal yönetim arayüzü
 
-**Durum:** Kısmen mevcut
+**Durum:** Tamamlandı
 
 - [x] Genel bakış
 - [x] Proje paneli
@@ -356,12 +369,12 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 
 ## 19. Çoklu aşama ve iş akışı yönetimi
 
-**Durum:** Kısmen mevcut
+**Durum:** Tamamlandı
 
 - [x] KPI kategorisi altyapısı
 - [x] ÖDR/KTR benzeri kategori tanımları
 - [x] Aşama geçiş kuralları
-- [ ] Aşama bazlı puanlama
+- [x] Aşama bazlı puanlama
 - [x] Aşama geçme barajı
 - [x] Finalist sayısı sınırı
 - [x] Sonuç açıklama tarihi yönetimi
@@ -371,6 +384,7 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 - 2026-08-12: Aşamalara geçme barajı, finalist limiti ve sonuç açıklama tarihi alanları eklendi.
 - 2026-08-12: Geçersiz baraj/limit değerleri API tarafından reddediliyor.
 - 2026-08-12: Aşama durumları `planned → active → completed → locked` akışıyla ilerliyor; geriye dönüşler 409 ile reddediliyor.
+- 2026-08-12: Jüri puanları isteğe bağlı `stage_id` ile saklanıyor ve proje detayında değerlendirme aşaması seçilerek gösteriliyor. Canlı API testinde aşama kimliğiyle puan kaydı doğrulandı.
 
 ## 20. AI entegrasyon sözleşmesi ve kalite görünürlüğü
 
@@ -382,8 +396,8 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 - [x] AI güven seviyesini gösterme
 - [x] AI kaynak/kanıt bağlantılarını gösterme
 - [x] AI ve jüri puanını karşılaştırma
-- [ ] Düşük güvenli sonuç uyarısı
-- [ ] Model sonucu ile proje sürümünü ilişkilendirme
+- [x] Düşük güvenli sonuç uyarısı
+- [x] Model sonucu ile proje sürümünü ilişkilendirme
 
 ---
 

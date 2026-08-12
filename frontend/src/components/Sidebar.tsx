@@ -1,13 +1,11 @@
-import { BellRing, CalendarRange, ClipboardList, FileBarChart, Gavel, LayoutDashboard, Moon, Settings, ShieldCheck, Sun, User, X } from 'lucide-react';
+import { BellRing, CalendarRange, ClipboardList, FileBarChart, Gavel, LayoutDashboard, LogOut, Moon, Settings, ShieldCheck, Sun, User, X } from 'lucide-react';
 
 import type { CategoryTemplate } from '@/lib/api';
 import { useLocale } from '@/lib/locale-context';
 import { useTheme } from '@/lib/theme-context';
-import { useJuror } from '@/lib/juror-context';
 import { CATEGORY_ICONS, DEFAULT_CATEGORY_ICON } from '@/lib/category-icons';
 import { isPhaseCategory } from '@/lib/category-groups';
 import { cn } from '@/lib/utils';
-import { Input } from '@/components/ui/input';
 
 export function Sidebar({
   categories,
@@ -20,6 +18,7 @@ export function Sidebar({
   onOpenReports,
   onOpenSettings,
   onOpenNotifications,
+  onSignOut,
   mobileOpen,
   onCloseMobile,
 }: {
@@ -33,15 +32,23 @@ export function Sidebar({
   onOpenReports: () => void;
   onOpenSettings: () => void;
   onOpenNotifications: () => void;
+  onSignOut: () => Promise<void>;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }) {
   const { locale, setLocale, t, categoryLabel } = useLocale();
   const { theme, toggleTheme } = useTheme();
-  const { jurorName, setJurorName } = useJuror();
-  const organization = typeof window !== 'undefined' ? localStorage.getItem('jury-organization') || 'T3 Vakfı' : 'T3 Vakfı';
+  const organization = typeof window !== 'undefined' ? localStorage.getItem('jury-organization') || 'T3 Foundation' : 'T3 Foundation';
   const competitionIdentity = typeof window !== 'undefined' ? localStorage.getItem('jury-competition-identity') || 'Creathon 2026' : 'Creathon 2026';
   const logoUrl = typeof window !== 'undefined' ? localStorage.getItem('jury-logo-url') : null;
+  const signedInUser = typeof window !== 'undefined' ? (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}'); } catch { return {}; } })() : {};
+  const signedInName = signedInUser.full_name || 'Authenticated user';
+  const role = signedInUser.role || 'read_only';
+  const canManageCompetitions = ['system_admin', 'competition_manager', 'chief_judge'].includes(role);
+  const canManageUsers = role === 'system_admin';
+  const canViewAudit = role === 'system_admin';
+  const canViewReports = ['system_admin', 'competition_manager', 'chief_judge', 'observer', 'read_only'].includes(role);
+  const canManageNotifications = role === 'system_admin';
 
   const totalProjects = Object.values(categoryCounts).reduce((sum, n) => sum + n, 0);
   const fieldCategories = categories.filter((c) => !isPhaseCategory(c.category));
@@ -105,7 +112,7 @@ export function Sidebar({
       </div>
 
       <div className="border-b px-3 py-3">
-        <button
+        {canManageCompetitions && <button
           type="button"
           onClick={() => {
             onOpenCompetitions();
@@ -115,22 +122,22 @@ export function Sidebar({
         >
           <CalendarRange className="size-4 shrink-0" />
           {t('competitionsLabel')}
-        </button>
-        <button type="button" onClick={() => { onOpenUsers(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+        </button>}
+        {canManageUsers && <button type="button" onClick={() => { onOpenUsers(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
           <ShieldCheck className="size-4 shrink-0" />{t('usersLabel')}
-        </button>
-        <button type="button" onClick={() => { onOpenAudit(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+        </button>}
+        {canViewAudit && <button type="button" onClick={() => { onOpenAudit(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
           <ClipboardList className="size-4 shrink-0" />{t('auditLabel')}
-        </button>
-        <button type="button" onClick={() => { onOpenReports(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+        </button>}
+        {canViewReports && <button type="button" onClick={() => { onOpenReports(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
           <FileBarChart className="size-4 shrink-0" />{t('reportsLabel')}
-        </button>
+        </button>}
         <button type="button" onClick={() => { onOpenSettings(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
           <Settings className="size-4 shrink-0" />{t('settingsLabel')}
         </button>
-        <button type="button" onClick={() => { onOpenNotifications(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+        {canManageNotifications && <button type="button" onClick={() => { onOpenNotifications(); onCloseMobile(); }} className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
           <BellRing className="size-4 shrink-0" />{t('notificationCenterLabel')}
-        </button>
+        </button>}
       </div>
 
       <div className="border-b px-5 py-3">
@@ -174,16 +181,7 @@ export function Sidebar({
       </nav>
 
       <div className="space-y-2.5 border-t px-3 py-3">
-        <div className="relative">
-          <User className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={jurorName}
-            onChange={(e) => setJurorName(e.target.value)}
-            placeholder={t('jurorNamePlaceholder')}
-            title={t('jurorNameLabel')}
-            className="h-8 pl-8 text-xs"
-          />
-        </div>
+        <div className="flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs text-muted-foreground"><User className="size-3.5" /><span className="truncate">{signedInName}</span></div>
 
         <div className="flex items-center gap-2">
           <button
@@ -214,6 +212,7 @@ export function Sidebar({
               </button>
             ))}
           </div>
+          <button type="button" onClick={() => void onSignOut()} aria-label="Sign out" className="flex h-8 w-8 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><LogOut className="size-3.5" /></button>
         </div>
       </div>
     </>

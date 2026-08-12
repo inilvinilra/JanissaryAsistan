@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, ExternalLink, FileText } from 'lucide-react';
+import { Download, ExternalLink, FileText, EyeOff } from 'lucide-react';
 
 import {
   getAiEvaluation,
@@ -10,7 +10,13 @@ import {
   getProjectMetadata,
   updateProjectMetadata,
   getProjectFiles,
+  getCompetitions,
+  getCompetitionStages,
+  getAppeals,
+  createAppeal,
+  getEligibilityReport,
   uploadProjectFile,
+  fetchProtectedFile,
   projectVersionFileUrl,
   updateProject,
   projectFileUrl,
@@ -22,10 +28,12 @@ import {
   type ProjectStatus,
   type ProjectMetadata,
   type ProjectFile,
+  type CompetitionStage,
+  type Appeal,
+  type EligibilityReport,
 } from '@/lib/api';
 import { useLocale } from '@/lib/locale-context';
 import { useToast } from '@/lib/toast-context';
-import { useJuror } from '@/lib/juror-context';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -53,7 +61,7 @@ export function ProjectDetailDialog({
 }) {
   const { t } = useLocale();
   const { showToast } = useToast();
-  const { jurorName } = useJuror();
+  const authenticatedName = typeof localStorage === 'undefined' ? 'Authenticated user' : (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').full_name || 'Authenticated user'; } catch { return 'Authenticated user'; } })();
   const [document, setDocument] = useState<Document | null | undefined>(undefined);
   const [aiEvaluation, setAiEvaluation] = useState<AiEvaluation | null | undefined>(undefined);
   const [juryScores, setJuryScores] = useState<JuryScore[]>([]);
@@ -61,6 +69,12 @@ export function ProjectDetailDialog({
   const [notes, setNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [juryScore, setJuryScore] = useState('');
+  const [blindReview, setBlindReview] = useState(false);
+  const [appeals, setAppeals] = useState<Appeal[]>([]);
+  const [appealReason, setAppealReason] = useState('');
+  const [eligibility, setEligibility] = useState<EligibilityReport | null>(null);
+  const [juryStageId, setJuryStageId] = useState('');
+  const [evaluationStages, setEvaluationStages] = useState<CompetitionStage[]>([]);
   const [juryComment, setJuryComment] = useState('');
   const [reviewCompleted, setReviewCompleted] = useState(false);
   const [tagText, setTagText] = useState('');
@@ -83,14 +97,18 @@ export function ProjectDetailDialog({
     setNotes(project.notes);
     setReviewCompleted(project.review_completed);
     setTagText(project.tags.join(', '));
-    Promise.all([getProjectDocument(project.id), getAiEvaluation(project.id), getJuryScores(project.id), getJuryAssignments(project.id), getProjectMetadata(project.id), getProjectFiles(project.id)])
-      .then(([nextDocument, nextAiEvaluation, nextJuryScores, nextJuryAssignments, nextMetadata, nextFiles]) => {
+    Promise.all([getProjectDocument(project.id), getAiEvaluation(project.id), getJuryScores(project.id), getJuryAssignments(project.id), getProjectMetadata(project.id), getProjectFiles(project.id), getCompetitions(), getAppeals(project.id), getEligibilityReport(project.id)])
+      .then(async ([nextDocument, nextAiEvaluation, nextJuryScores, nextJuryAssignments, nextMetadata, nextFiles, competitions, nextAppeals, nextEligibility]) => {
         setDocument(nextDocument);
         setAiEvaluation(nextAiEvaluation);
         setJuryScores(nextJuryScores);
         setJuryAssignments(nextJuryAssignments);
         setMetadata(nextMetadata); setInstitution(nextMetadata.institution); setKeywords(nextMetadata.keywords.join(', ')); setGithubUrl(nextMetadata.github_url ?? ''); setDemoUrl(nextMetadata.demo_url ?? ''); setPrototypeDescription(nextMetadata.prototype_description);
         setProjectFiles(nextFiles);
+        setAppeals(nextAppeals);
+        setEligibility(nextEligibility);
+        const stageLists = await Promise.all(competitions.map((competition) => getCompetitionStages(competition.id)));
+        setEvaluationStages(stageLists.flat());
         setVersionComparison(null);
       })
       .catch(() => {
@@ -120,11 +138,12 @@ export function ProjectDetailDialog({
   }
 
   async function saveReview() {
-    if (!jurorName.trim() || !juryScore) return;
+    if (!juryScore) return;
     setSavingReview(true);
     try {
       const score = await addJuryScore(project.id, {
-        juror_name: jurorName.trim(),
+        stage_id: juryStageId ? Number(juryStageId) : null,
+        juror_name: authenticatedName,
         total_score: Number(juryScore),
         kpi_scores: [],
         notes: juryComment,
@@ -149,6 +168,8 @@ export function ProjectDetailDialog({
     finally { setSavingMetadata(false); }
   }
 
+  async function submitAppeal() { if (!appealReason.trim()) return; try { const appeal = await createAppeal(project.id, { submitted_by: authenticatedName, reason: appealReason.trim(), committee: [] }); setAppeals((items) => [appeal, ...items]); setAppealReason(''); showToast('Appeal recorded.', 'success'); } catch (error) { showToast((error as Error).message, 'error'); } }
+
   async function uploadFile(file: File | undefined) {
     if (!file) return;
     setUploadingFile(true);
@@ -162,14 +183,26 @@ export function ProjectDetailDialog({
     const [latest, previous] = projectFiles;
     const textLike = /\.(txt|md|markdown|csv)$/i.test(latest.file_name) && /\.(txt|md|markdown|csv)$/i.test(previous.file_name);
     if (!textLike) { setVersionComparison(`${t('binaryVersionComparison')}: v${previous.version} (${Math.ceil(previous.size_bytes / 1024)} KB) → v${latest.version} (${Math.ceil(latest.size_bytes / 1024)} KB)`); return; }
-    try { const [newText, oldText] = await Promise.all([fetch(projectVersionFileUrl(project.id, latest.id)).then((response) => response.text()), fetch(projectVersionFileUrl(project.id, previous.id)).then((response) => response.text())]); const oldLines = oldText.split(/\r?\n/); const newLines = newText.split(/\r?\n/); const changed = newLines.reduce((count, line, index) => count + (line !== oldLines[index] ? 1 : 0), 0) + Math.max(0, oldLines.length - newLines.length); setVersionComparison(t('textVersionComparison', { old: String(previous.version), next: String(latest.version), changed: String(changed) })); } catch { setVersionComparison(t('versionComparisonFailed')); }
+    try { const [newText, oldText] = await Promise.all([fetchProtectedFile(projectVersionFileUrl(project.id, latest.id)).then((response) => response.text()), fetchProtectedFile(projectVersionFileUrl(project.id, previous.id)).then((response) => response.text())]); const oldLines = oldText.split(/\r?\n/); const newLines = newText.split(/\r?\n/); const changed = newLines.reduce((count, line, index) => count + (line !== oldLines[index] ? 1 : 0), 0) + Math.max(0, oldLines.length - newLines.length); setVersionComparison(t('textVersionComparison', { old: String(previous.version), next: String(latest.version), changed: String(changed) })); } catch { setVersionComparison(t('versionComparisonFailed')); }
+  }
+
+  async function openProtectedFile(url: string, download = false) {
+    try {
+      const response = await fetchProtectedFile(url);
+      const blobUrl = URL.createObjectURL(await response.blob());
+      const link = window.document.createElement('a');
+      link.href = blobUrl;
+      if (download) link.download = 'proje-dosyasi'; else link.target = '_blank';
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch (error) { showToast((error as Error).message, 'error'); }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{project.name}</DialogTitle>
+          <div className="flex items-center justify-between gap-3"><DialogTitle>{blindReview ? `PRJ-${String(project.id).padStart(6, '0')}` : project.name}</DialogTitle><Button type="button" size="sm" variant="outline" onClick={() => setBlindReview((value) => !value)}><EyeOff className="mr-1.5 size-3.5" />{blindReview ? t('showIdentity') : t('enableBlindReview')}</Button></div>
           <DialogDescription>{t('detailTitle')}</DialogDescription>
         </DialogHeader>
 
@@ -190,23 +223,14 @@ export function ProjectDetailDialog({
 
             {project.has_file ? (
               <div className="flex items-center gap-2">
-                <a
-                  href={projectFileUrl(project.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-primary flex items-center gap-1 text-xs hover:underline"
-                >
+                <button type="button" onClick={() => void openProtectedFile(projectFileUrl(project.id))} className="text-primary flex items-center gap-1 text-xs hover:underline">
                   <ExternalLink className="size-3.5" />
                   {t('viewFile')}
-                </a>
-                <a
-                  href={projectFileUrl(project.id)}
-                  download
-                  className="text-muted-foreground flex items-center gap-1 text-xs hover:text-foreground"
-                >
+                </button>
+                <button type="button" onClick={() => void openProtectedFile(projectFileUrl(project.id), true)} className="text-muted-foreground flex items-center gap-1 text-xs hover:text-foreground">
                   <Download className="size-3.5" />
                   {t('downloadFile')}
-                </a>
+                </button>
               </div>
             ) : (
               <span className="text-muted-foreground text-xs">{t('noFile')}</span>
@@ -230,19 +254,23 @@ export function ProjectDetailDialog({
             </div>
           </div>
 
-          <div className="space-y-3 rounded-lg border p-3">
+          {!blindReview && <div className="space-y-3 rounded-lg border p-3">
             <p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('projectMetadata')}</p>
             <div className="grid gap-2 sm:grid-cols-2"><Input value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder={t('institutionPlaceholder')} /><Input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder={t('keywordsPlaceholder')} /></div>
             <div className="grid gap-2 sm:grid-cols-2"><Input type="url" value={githubUrl} onChange={(e) => setGithubUrl(e.target.value)} placeholder="GitHub URL" /><Input type="url" value={demoUrl} onChange={(e) => setDemoUrl(e.target.value)} placeholder={t('demoUrlPlaceholder')} /></div>
             <div className="grid gap-2 sm:grid-cols-2"><Input value={metadata?.team_name ?? ''} onChange={(e) => setMetadata((prev) => prev ? { ...prev, team_name: e.target.value } : prev)} placeholder={t('teamNamePlaceholder')} /><Input value={(metadata?.team_members ?? []).join(', ')} onChange={(e) => setMetadata((prev) => prev ? { ...prev, team_members: e.target.value.split(',').map((item) => item.trim()).filter(Boolean) } : prev)} placeholder={t('teamMembersPlaceholder')} /></div>
             <Textarea value={prototypeDescription} onChange={(e) => setPrototypeDescription(e.target.value)} placeholder={t('prototypePlaceholder')} className="min-h-16" />
             <div className="flex justify-end"><Button size="sm" onClick={saveMetadata} disabled={savingMetadata}>{savingMetadata ? t('saving') : t('saveMetadata')}</Button></div>
-          </div>
+          </div>}
+
+          <div className="space-y-2 rounded-lg border p-3"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('appealsTitle')}</p><Textarea value={appealReason} onChange={(e) => setAppealReason(e.target.value)} placeholder={t('appealReasonPlaceholder')} className="min-h-16" /><Button size="sm" variant="outline" onClick={() => void submitAppeal()} disabled={!appealReason.trim()}>{t('saveAppeal')}</Button>{appeals.map((appeal) => <div key={appeal.id} className="rounded-md border bg-background p-2 text-xs"><div className="flex justify-between"><span className="font-medium">{appeal.status}</span><span>{new Date(appeal.created_at).toLocaleDateString()}</span></div><p className="mt-1 text-muted-foreground">{appeal.reason}</p>{appeal.decision_reason && <p className="mt-1 text-primary">{t('decisionLabel')}: {appeal.decision_reason}</p>}</div>)}</div>
+
+          {eligibility && <div className="space-y-2 rounded-lg border p-3"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('eligibilityTitle')} · <span className={eligibility.eligible ? 'text-primary' : 'text-destructive'}>{eligibility.eligible ? t('eligible') : t('reviewRequired')}</span></p>{eligibility.checks.map((check) => <div key={check.key} className="flex items-start justify-between gap-3 text-xs"><span>{check.label}<span className="mt-0.5 block text-muted-foreground">{check.detail}</span></span><span className={check.passed ? 'text-primary' : 'text-destructive'}>{check.passed ? t('passed') : t('missing')}</span></div>)}</div>}
 
           <div className="space-y-3 rounded-lg border p-3">
             <div className="flex items-center justify-between"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('projectFilesTitle')}</p><label className="cursor-pointer rounded-md border px-3 py-1.5 text-xs hover:bg-accent">{uploadingFile ? t('uploading') : t('uploadFile')}<input type="file" className="hidden" accept=".pdf,.txt,.md,.markdown,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp" disabled={uploadingFile} onChange={(e) => { void uploadFile(e.target.files?.[0]); e.currentTarget.value = ''; }} /></label></div>
             <p className="text-muted-foreground text-[11px]">{t('fileVersionDescription')}</p>
-            <div className="space-y-1.5">{projectFiles.map((file) => <div key={file.id} className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-xs"><span className="truncate"><strong>v{file.version}</strong> · {file.file_name} <span className="text-muted-foreground">({Math.ceil(file.size_bytes / 1024)} KB · {new Date(file.uploaded_at).toLocaleString()})</span></span><a className="text-primary shrink-0 hover:underline" href={projectVersionFileUrl(project.id, file.id)} target="_blank" rel="noreferrer">{t('viewFile')}</a></div>)}{projectFiles.length === 0 && <p className="text-muted-foreground text-xs">{t('noProjectFiles')}</p>}</div>
+            <div className="space-y-1.5">{projectFiles.map((file) => <div key={file.id} className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-xs"><span className="truncate"><strong>v{file.version}</strong> · {file.file_name} <span className="text-muted-foreground">({Math.ceil(file.size_bytes / 1024)} KB · {new Date(file.uploaded_at).toLocaleString()})</span></span><button type="button" className="text-primary shrink-0 hover:underline" onClick={() => void openProtectedFile(projectVersionFileUrl(project.id, file.id))}>{t('viewFile')}</button></div>)}{projectFiles.length === 0 && <p className="text-muted-foreground text-xs">{t('noProjectFiles')}</p>}</div>
             {projectFiles.length > 1 && <><Button variant="outline" size="sm" onClick={() => void compareLatestVersions()}>{t('compareVersions')}</Button>{versionComparison && <p className="rounded-md bg-secondary/60 p-2 text-xs">{versionComparison}</p>}</>}
           </div>
 
@@ -255,8 +283,9 @@ export function ProjectDetailDialog({
               <Input type="number" min="0" max="100" step="0.1" value={juryScore} onChange={(e) => setJuryScore(e.target.value)} placeholder={t('juryScorePlaceholder')} />
               <Textarea value={juryComment} onChange={(e) => setJuryComment(e.target.value)} placeholder={t('juryCommentPlaceholder')} className="min-h-16" />
             </div>
+            <select value={juryStageId} onChange={(e) => setJuryStageId(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm"><option value="">{t('generalScore')}</option>{evaluationStages.map((stage) => <option key={stage.id} value={stage.id}>{t('stageScore')}: {stage.name}</option>)}</select>
             <Input value={tagText} onChange={(e) => setTagText(e.target.value)} placeholder={t('tagsPlaceholder')} />
-            <Button size="sm" onClick={saveReview} disabled={savingReview || !jurorName.trim() || !juryScore}>{savingReview ? t('saving') : t('submitJuryReview')}</Button>
+            <Button size="sm" onClick={saveReview} disabled={savingReview || !juryScore}>{savingReview ? t('saving') : t('submitJuryReview')}</Button>
           </div>
 
           {document === undefined && <p className="text-muted-foreground text-sm">{t('loading')}</p>}
@@ -265,12 +294,13 @@ export function ProjectDetailDialog({
             <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('aiEvaluationTitle')}</p>
-                <span className="text-muted-foreground text-[11px]">{aiEvaluation.model_version} · {t('aiConfidence')} %{Math.round(aiEvaluation.confidence * 100)}</span>
+                <span className="text-muted-foreground text-[11px]">{aiEvaluation.model_version} · {t('aiConfidence')} %{Math.round(aiEvaluation.confidence * 100)}{aiEvaluation.source_file_version ? ` · ${t('fileVersion', { version: String(aiEvaluation.source_file_version) })}` : ''}</span>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-md bg-background p-2"><p className="text-muted-foreground text-[10px] uppercase">{t('aiScoreLabel')}</p><p className="font-data text-xl font-bold">{aiEvaluation.total_score.toFixed(1)}</p></div>
                 <div className="rounded-md bg-background p-2"><p className="text-muted-foreground text-[10px] uppercase">{t('juryAverageLabel')}</p><p className="font-data text-xl font-bold">{juryScores.length ? (juryScores.reduce((sum, score) => sum + score.total_score, 0) / juryScores.length).toFixed(1) : '—'}</p></div>
               </div>
+              {aiEvaluation.confidence < 0.6 && <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">{t('lowAiConfidence')}</p>}
               {juryScores.length > 0 && <p className="text-muted-foreground text-xs">{t('aiJuryDifference')}: <span className="font-data font-semibold">{(aiEvaluation.total_score - juryScores.reduce((sum, score) => sum + score.total_score, 0) / juryScores.length).toFixed(1)}</span></p>}
               {aiEvaluation.kpi_scores.map((kpi) => (
                 <div key={kpi.name} className="rounded-md border bg-background p-2.5">
@@ -292,7 +322,7 @@ export function ProjectDetailDialog({
 
           {juryAssignments.length > 0 && (
             <div className="rounded-lg border p-3">
-              <p className="mb-2 text-xs font-semibold tracking-wide uppercase text-muted-foreground">Atanan jüri üyeleri</p>
+              <p className="mb-2 text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('assignedJurors')}</p>
               <div className="space-y-1.5">
                 {juryAssignments.map((assignment) => (
                   <div key={assignment.id} className="flex items-center justify-between text-xs">
@@ -308,9 +338,10 @@ export function ProjectDetailDialog({
             <div className="rounded-lg border p-3">
               <p className="mb-2 text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('juryScoresTitle')}</p>
               <div className="space-y-2">
-                {juryScores.map((score) => (
+                {juryScores.map((score, index) => (
                   <div key={score.id} className="rounded-md border bg-background p-2 text-xs">
-                    <div className="flex items-center justify-between"><span className="font-medium">{score.juror_name}</span><span className="font-data font-semibold">{score.total_score.toFixed(1)}</span></div>
+                    <div className="flex items-center justify-between"><span className="font-medium">{blindReview ? t('blindJuror', { number: String(index + 1) }) : score.juror_name}</span><span className="font-data font-semibold">{score.total_score.toFixed(1)}</span></div>
+                    {score.stage_id && <p className="text-primary mt-1">{t('stageScore')}: {evaluationStages.find((stage) => stage.id === score.stage_id)?.name ?? `#${score.stage_id}`}</p>}
                     <p className="text-muted-foreground mt-1">{score.notes || t('noJuryComment')}</p>
                   </div>
                 ))}

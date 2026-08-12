@@ -9,3 +9,10 @@ frontend/.env
 backend/target/
 backend/uploads/
 backend/.env
+frontend/test-results/
+frontend/playwright-report/
+
+!CRITICAL-IMPROVEMENTS.md
+!DEPLOYMENT.md
+!SYSTEM-TEST-PLAN.md
+!TEST-EXECUTION-REPORT.md

@@ -40,7 +40,7 @@ export function CompetitionManager() {
   const [selectedKpiCategory, setSelectedKpiCategory] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [newCompetition, setNewCompetition] = useState({ name: '', description: '', application_start: '', application_end: '', organization: 'T3 Vakfı' });
+  const [newCompetition, setNewCompetition] = useState({ name: '', description: '', application_start: '', application_end: '', organization: 'T3 Foundation' });
   const [newStage, setNewStage] = useState({ name: '', stage_type: 'review', position: 1, starts_at: '', ends_at: '', passing_score: 0, finalist_limit: 0, results_at: '' });
   const [newCategory, setNewCategory] = useState({ name: '', slug: '', parent_id: '', kpi_category: '' });
   const [newTeamName, setNewTeamName] = useState('');
@@ -100,11 +100,11 @@ export function CompetitionManager() {
         description: newCompetition.description.trim(),
         application_start: newCompetition.application_start || undefined,
         application_end: newCompetition.application_end || undefined,
-        organization: newCompetition.organization.trim() || 'T3 Vakfı',
+        organization: newCompetition.organization.trim() || 'T3 Foundation',
       });
       setCompetitions((items) => [created, ...items]);
       setSelectedId(created.id);
-      setNewCompetition({ name: '', description: '', application_start: '', application_end: '', organization: 'T3 Vakfı' });
+      setNewCompetition({ name: '', description: '', application_start: '', application_end: '', organization: 'T3 Foundation' });
       showToast(t('competitionCreated'), 'success');
     } catch (e) {
       showToast((e as Error).message, 'error');

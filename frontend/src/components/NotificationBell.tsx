@@ -8,20 +8,22 @@ import { cn } from '@/lib/utils';
 function relativeTime(iso: string, locale: 'tr' | 'en'): string {
   const diffMs = Date.now() - new Date(iso).getTime();
   const minutes = Math.max(1, Math.round(diffMs / 60000));
-  if (minutes < 60) return locale === 'tr' ? `${minutes} dk önce` : `${minutes}m ago`;
+  const formatter = new Intl.RelativeTimeFormat(locale === 'tr' ? 'tr-TR' : 'en-US', { numeric: 'auto', style: 'short' });
+  if (minutes < 60) return formatter.format(-minutes, 'minute');
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return locale === 'tr' ? `${hours} sa önce` : `${hours}h ago`;
+  if (hours < 24) return formatter.format(-hours, 'hour');
   const days = Math.round(hours / 24);
-  return locale === 'tr' ? `${days} gün önce` : `${days}d ago`;
+  return formatter.format(-days, 'day');
 }
 
-export function NotificationBell() {
+export function NotificationBell({ visible }: { visible: boolean }) {
   const { t, locale } = useLocale();
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<AuditEvent[]>([]);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!visible) return;
     getAuditEvents(8)
       .then(setEntries)
       .catch(() => {});
@@ -31,7 +33,7 @@ export function NotificationBell() {
         .catch(() => {});
     }, 30000);
     return () => clearInterval(id);
-  }, []);
+  }, [visible]);
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -40,6 +42,8 @@ export function NotificationBell() {
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, []);
+
+  if (!visible) return null;
 
   return (
     <div ref={ref} className="relative">

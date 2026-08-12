@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// A parsed document (a project write-up)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub filename: String,
@@ -24,6 +23,8 @@ pub enum FileType {
     Txt,
     Markdown,
     Docx,
+    Spreadsheet,
+    Image,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,40 +41,48 @@ pub struct Section {
     pub word_count: usize,
 }
 
-/// A single web search result (from Brave Search)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub title: String,
     pub url: String,
     pub snippet: String,
-    pub source_type: String, // "academic", "github", "documentation", "web"
+    pub source_type: String,
     pub fetched_content: Option<String>,
     pub http_status: u16,
 }
 
-// --- Jury Assistant's own domain model (project / KPI / ranking) ---
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KpiScore {
     pub name: String,
-    pub score: f64, // 0-100
+    pub score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: i32,
+    pub competition_id: i32,
+    pub team_id: Option<i32>,
     pub name: String,
     pub category: String,
     pub kpi_scores: Vec<KpiScore>,
     pub ai_score: f64,
-    // Set when a juror drags this project to a new position; None until then,
-    // in which case ranking falls back to ai_score.
     pub manual_rank: Option<i32>,
     pub notes: String,
     pub status: ProjectStatus,
     pub has_file: bool,
     pub review_completed: bool,
     pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BlindProject {
+    pub reference: String,
+    pub category: String,
+    pub kpi_scores: Vec<KpiScore>,
+    pub ai_score: f64,
+    pub manual_rank: Option<i32>,
+    pub status: ProjectStatus,
+    pub review_completed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,16 +141,12 @@ impl ProjectStatus {
     }
 }
 
-/// Body sent by the frontend after a drag-and-drop reorder:
-/// { "category": "software", "order": [4, 3], "changed_by": "Ayşe" }
 #[derive(Debug, Deserialize)]
 pub struct RankingUpdate {
     pub category: String,
     pub order: Vec<i32>,
-    pub changed_by: Option<String>,
 }
 
-/// PATCH /projects/{id} body — every field optional, only provided ones are applied.
 #[derive(Debug, Deserialize)]
 pub struct ProjectUpdate {
     pub notes: Option<String>,
@@ -150,7 +155,6 @@ pub struct ProjectUpdate {
     pub tags: Option<Vec<String>>,
 }
 
-/// One KPI definition within a category's scoring template
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KpiTemplate {
     pub name: String,
@@ -158,14 +162,12 @@ pub struct KpiTemplate {
     pub description: String,
 }
 
-/// The full KPI set a jury field (category) scores projects against
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CategoryTemplate {
     pub category: String,
     pub kpis: Vec<KpiTemplate>,
 }
 
-/// One recorded manual ranking change, for the activity feed
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEntry {
     pub project_id: i32,
@@ -195,6 +197,8 @@ pub struct TeamMember {
     pub email: String,
     pub role: String,
     pub is_scholar: bool,
+    pub birth_year: Option<i32>,
+    pub education_level: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,6 +209,7 @@ pub struct Submission {
     pub title: String,
     pub file_name: String,
     pub status: String,
+    pub is_late: bool,
     pub submitted_at: Option<String>,
 }
 
@@ -229,6 +234,8 @@ pub struct AddTeamMember {
     pub email: String,
     pub role: Option<String>,
     pub is_scholar: bool,
+    pub birth_year: Option<i32>,
+    pub education_level: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,6 +258,12 @@ pub struct DemoDaySlot {
     pub starts_at: String,
     pub duration_minutes: i32,
     pub status: String,
+    pub checked_in_at: Option<String>,
+    pub evidence_urls: Vec<String>,
+    pub field_score: Option<f64>,
+    pub jury_signature: Option<String>,
+    pub check_in_token: String,
+    pub prototype_checklist: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -260,6 +273,22 @@ pub struct CreateDemoDaySlot {
     pub room: String,
     pub starts_at: String,
     pub duration_minutes: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateDemoDaySlot {
+    pub status: Option<String>,
+    pub check_in: Option<bool>,
+    pub evidence_urls: Option<Vec<String>>,
+    pub field_score: Option<f64>,
+    pub jury_signature: Option<String>,
+    pub prototype_checklist: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FinalizeCompetition {
+    pub minutes: String,
+    pub signed_by: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,6 +333,7 @@ pub struct AiEvaluation {
     pub model_version: String,
     pub total_score: f64,
     pub confidence: f64,
+    pub source_file_version: Option<i32>,
     pub kpi_scores: Vec<AiKpiEvaluation>,
     pub strengths: Vec<String>,
     pub weaknesses: Vec<String>,
@@ -319,6 +349,8 @@ pub struct UpsertAiEvaluation {
     pub model_version: String,
     pub total_score: f64,
     pub confidence: f64,
+    #[serde(default)]
+    pub source_file_version: Option<i32>,
     pub kpi_scores: Vec<AiKpiEvaluation>,
     pub strengths: Vec<String>,
     pub weaknesses: Vec<String>,
@@ -332,6 +364,7 @@ pub struct UpsertAiEvaluation {
 pub struct JuryScore {
     pub id: i32,
     pub project_id: i32,
+    pub stage_id: Option<i32>,
     pub juror_name: String,
     pub total_score: f64,
     pub kpi_scores: Vec<KpiScore>,
@@ -341,6 +374,7 @@ pub struct JuryScore {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateJuryScore {
+    pub stage_id: Option<i32>,
     pub juror_name: String,
     pub total_score: f64,
     pub kpi_scores: Vec<KpiScore>,
@@ -355,6 +389,7 @@ pub struct JuryAssignment {
     pub role: String,
     pub status: String,
     pub conflict_declared: bool,
+    pub conflict_reason: String,
     pub assigned_at: String,
 }
 
@@ -362,6 +397,35 @@ pub struct JuryAssignment {
 pub struct CreateJuryAssignment {
     pub juror_name: String,
     pub role: Option<String>,
+    pub category: Option<String>,
+    pub conflict_declared: Option<bool>,
+    pub conflict_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JuryReadiness {
+    pub project_id: i32,
+    pub assigned_count: i64,
+    pub minimum_required: i64,
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JurorProfile {
+    pub user_id: i32,
+    pub full_name: String,
+    pub email: String,
+    pub expertise: Vec<String>,
+    pub institution: String,
+    pub max_assignments: i32,
+    pub active_assignments: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateJurorProfile {
+    pub expertise: Vec<String>,
+    pub institution: String,
+    pub max_assignments: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,6 +448,9 @@ pub struct User {
     pub email: String,
     pub role: String,
     pub active: bool,
+    pub must_change_password: bool,
+    pub two_factor_enabled: bool,
+    pub two_factor_required: bool,
     pub competition_id: Option<i32>,
     pub category: Option<String>,
     pub created_at: String,
@@ -396,6 +463,7 @@ pub struct CreateUser {
     pub role: String,
     pub competition_id: Option<i32>,
     pub category: Option<String>,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -404,6 +472,137 @@ pub struct UpdateUser {
     pub active: Option<bool>,
     pub competition_id: Option<i32>,
     pub category: Option<String>,
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+    pub totp_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmPasswordResetRequest {
+    pub token: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PasswordResetToken {
+    pub token: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthSession {
+    pub token: String,
+    pub expires_at: String,
+    pub user: User,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TwoFactorSetup {
+    pub secret: String,
+    pub otpauth_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TwoFactorConfirm {
+    pub code: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TwoFactorConfirmation {
+    pub recovery_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Appeal {
+    pub id: i32,
+    pub project_id: i32,
+    pub submitted_by: String,
+    pub reason: String,
+    pub deadline: Option<String>,
+    pub committee: Vec<String>,
+    pub status: String,
+    pub decision_reason: String,
+    pub created_at: String,
+    pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAppeal {
+    pub submitted_by: String,
+    pub reason: String,
+    pub deadline: Option<String>,
+    pub committee: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveAppeal {
+    pub status: String,
+    pub decision_reason: String,
+    pub new_score: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EligibilityCheck {
+    pub key: String,
+    pub label: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EligibilityReport {
+    pub project_id: i32,
+    pub eligible: bool,
+    pub checks: Vec<EligibilityCheck>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JurorCalibration {
+    pub juror_name: String,
+    pub score_count: i64,
+    pub average_score: f64,
+    pub deviation_from_overall: f64,
+    pub alert: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalibrationSummary {
+    pub overall_average: f64,
+    pub jurors: Vec<JurorCalibration>,
+    pub kpi_comment_variance: Vec<KpiCommentVariance>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KpiCommentVariance {
+    pub project_id: i32,
+    pub comment_count: i64,
+    pub distinct_comment_count: i64,
+    pub alert: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalibrationCase {
+    pub id: i32,
+    pub project_id: i32,
+    pub expected_score: f64,
+    pub active: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateCalibrationCase {
+    pub project_id: i32,
+    pub expected_score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -432,7 +631,33 @@ pub struct CreateNotification {
     pub category: Option<String>,
 }
 
-/// A competition container. Categories, stages and projects can be scoped to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailCampaign {
+    pub id: i32,
+    pub subject: String,
+    pub body: String,
+    pub audience: String,
+    pub category: Option<String>,
+    pub recipient_count: i64,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateEmailCampaign {
+    pub subject: String,
+    pub body: String,
+    pub audience: String,
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EmailDeliveryTarget {
+    pub id: i32,
+    pub email: String,
+    pub attempt_count: i32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Competition {
     pub id: i32,
@@ -442,6 +667,13 @@ pub struct Competition {
     pub application_end: Option<String>,
     pub status: CompetitionStatus,
     pub organization: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationSummary {
+    pub organization: String,
+    pub competition_count: i64,
+    pub archived_count: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -478,7 +710,9 @@ pub struct CompetitionStage {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateStageStatus { pub status: String }
+pub struct UpdateStageStatus {
+    pub status: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompetitionCategory {

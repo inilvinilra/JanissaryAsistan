@@ -32,7 +32,6 @@ pub async fn search_related_sources(
 
     let mut all_results: Vec<SearchResult> = Vec::new();
 
-    // Only the top 5 keywords, to save on API quota
     let search_terms: Vec<String> = keywords.iter().take(5).cloned().collect();
 
     for keyword in &search_terms {
@@ -174,8 +173,6 @@ fn classify_source(url: &str) -> String {
 mod tests {
     use super::*;
 
-    // Keep parser/scraper unit tests deterministic. Network availability is an
-    // environment concern and should be covered by a separate integration test.
     #[test]
     fn clean_html_strips_tags_and_normalizes_whitespace() {
         let content = clean_html("<html><body>  Hello <strong>world</strong> </body></html>");
@@ -186,8 +183,14 @@ mod tests {
     #[test]
     fn classify_source_detects_supported_source_types() {
         assert_eq!(classify_source("https://arxiv.org/abs/1234"), "academic");
-        assert_eq!(classify_source("https://github.com/example/project"), "github");
+        assert_eq!(
+            classify_source("https://github.com/example/project"),
+            "github"
+        );
         assert_eq!(classify_source("https://example.com/report.pdf"), "pdf");
-        assert_eq!(classify_source("https://docs.example.com/guide"), "documentation");
+        assert_eq!(
+            classify_source("https://docs.example.com/guide"),
+            "documentation"
+        );
     }
 }

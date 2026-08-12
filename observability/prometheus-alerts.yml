@@ -1,0 +1,19 @@
+groups:
+  - name: jury-assistant
+    rules:
+      - alert: JuryAssistantUnavailable
+        expr: up{job="jury-assistant-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Jury Assistant API is unavailable
+          description: The API scrape target has been unavailable for more than two minutes.
+      - alert: JuryAssistantRateLimitSpike
+        expr: increase(jury_assistant_rate_limit_rejections_total[5m]) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Rate-limit rejections are elevated
+          description: More than 25 requests were rate-limited during the last five minutes.

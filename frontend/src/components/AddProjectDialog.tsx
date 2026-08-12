@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useState } from 'react';
 
-import { uploadProject, type CategoryTemplate, type Project } from '@/lib/api';
+import { getCompetitions, uploadProject, type CategoryTemplate, type Competition, type Project } from '@/lib/api';
 import { useLocale } from '@/lib/locale-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,9 +30,21 @@ export function AddProjectDialog({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [category, setCategory] = useState(defaultCategory);
+  const [competitions, setCompetitions] = useState<Competition[]>([]);
+  const [competitionId, setCompetitionId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    getCompetitions()
+      .then((items) => {
+        setCompetitions(items);
+        setCompetitionId((current) => current || String(items[0]?.id ?? ''));
+      })
+      .catch((reason) => setError((reason as Error).message));
+  }, [open]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,7 +56,11 @@ export function AddProjectDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const project = await uploadProject(name, category, file);
+      if (!competitionId) {
+        setError('Select a competition before uploading a project.');
+        return;
+      }
+      const project = await uploadProject(name, category, Number(competitionId), file);
       onCreated(project);
       setOpen(false);
       setName('');
@@ -71,6 +87,14 @@ export function AddProjectDialog({
           <div className="space-y-2">
             <Label htmlFor="project-name">{t('fieldName')}</Label>
             <Input id="project-name" value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="project-competition">Competition</Label>
+            <Select value={competitionId} onValueChange={setCompetitionId}>
+              <SelectTrigger id="project-competition" className="w-full"><SelectValue placeholder="Select a competition" /></SelectTrigger>
+              <SelectContent>{competitions.map((competition) => <SelectItem key={competition.id} value={String(competition.id)}>{competition.name}</SelectItem>)}</SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-2">

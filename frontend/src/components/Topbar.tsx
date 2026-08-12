@@ -15,6 +15,8 @@ export function Topbar({
   onProjectCreated,
   onExportCsv,
   onOpenMobileSidebar,
+  canCreateProjects,
+  canViewActivity,
 }: {
   category: string;
   categories: CategoryTemplate[];
@@ -24,6 +26,8 @@ export function Topbar({
   onProjectCreated: (project: Project) => void;
   onExportCsv: () => void;
   onOpenMobileSidebar: () => void;
+  canCreateProjects: boolean;
+  canViewActivity: boolean;
 }) {
   const { t, categoryLabel } = useLocale();
   const kpiNames = activeTemplate?.kpis.map((k) => k.name).join(', ');
@@ -69,11 +73,11 @@ export function Topbar({
           {t('exportCsv')}
         </button>
 
-        {categories.length > 0 && (
+        {canCreateProjects && categories.length > 0 && (
           <AddProjectDialog categories={categories} defaultCategory={category} onCreated={onProjectCreated} />
         )}
 
-        <NotificationBell />
+        <NotificationBell visible={canViewActivity} />
       </div>
     </header>
   );

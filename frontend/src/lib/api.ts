@@ -1,4 +1,41 @@
-const API_URL = import.meta.env.PUBLIC_API_URL;
+const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://127.0.0.1:3000';
+
+function authHeaders(headers?: HeadersInit): Headers {
+  const next = new Headers(headers);
+  const token = typeof localStorage === 'undefined' ? null : localStorage.getItem('jury-auth-token');
+  if (token) next.set('Authorization', `Bearer ${token}`);
+  return next;
+}
+
+export interface AuthUser { id: number; full_name: string; email: string; role: string; active: boolean; must_change_password: boolean; two_factor_enabled: boolean; two_factor_required: boolean; competition_id: number | null; category: string | null; created_at: string; }
+export interface AuthSession { token: string; expires_at: string; user: AuthUser; }
+export function login(input: { email: string; password: string; totp_code?: string }): Promise<AuthSession> { return jsonRequest(`${API_URL}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
+export async function logout(token: string): Promise<void> { await fetch(`${API_URL}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); }
+export function getCurrentUser(): Promise<AuthUser> { return jsonRequest(`${API_URL}/auth/session`); }
+export async function subscribeToUpdates(signal: AbortSignal, onRefresh: () => void): Promise<void> {
+  const response = await fetch(`${API_URL}/events`, { headers: authHeaders(), signal });
+  if (!response.ok || !response.body) throw new Error(`Live update subscription failed: ${response.status}`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (!signal.aborted) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const message = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      if (message.includes('event: refresh')) onRefresh();
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+}
+export async function changePassword(input: { current_password: string; new_password: string }): Promise<void> { const response = await fetch(`${API_URL}/auth/password`, { method: 'PUT', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(input) }); if (!response.ok) throw new Error(`Password change failed: ${response.status}`); }
+export interface TwoFactorSetup { secret: string; otpauth_url: string; }
+export interface TwoFactorConfirmation { recovery_codes: string[]; }
+export function setupTwoFactor(): Promise<TwoFactorSetup> { return jsonRequest(`${API_URL}/auth/2fa/setup`, { method: 'POST' }); }
+export async function confirmTwoFactor(code: string): Promise<TwoFactorConfirmation> { return jsonRequest(`${API_URL}/auth/2fa/confirm`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ code }) }); }
 
 export interface KpiScore {
   name: string;
@@ -35,6 +72,8 @@ export interface Competition {
   status: 'draft' | 'active' | 'archived';
   organization: string;
 }
+export interface OrganizationSummary { organization: string; competition_count: number; archived_count: number; }
+export function getOrganizations(): Promise<OrganizationSummary[]> { return jsonRequest(`${API_URL}/organizations`); }
 
 export interface CompetitionStage {
   id: number;
@@ -57,6 +96,8 @@ export interface TeamMember {
   email: string;
   role: string;
   is_scholar: boolean;
+  birth_year: number | null;
+  education_level: string;
 }
 
 export interface Team {
@@ -75,6 +116,7 @@ export interface Submission {
   title: string;
   file_name: string;
   status: string;
+  is_late: boolean;
   submitted_at: string | null;
 }
 
@@ -84,6 +126,7 @@ export interface AiKpiEvaluation {
   reason: string;
   evidence: string[];
   confidence: number;
+  source_file_version: number | null;
 }
 
 export interface SimilarProject {
@@ -111,6 +154,7 @@ export interface AiEvaluation {
 export interface JuryScore {
   id: number;
   project_id: number;
+  stage_id: number | null;
   juror_name: string;
   total_score: number;
   kpi_scores: KpiScore[];
@@ -125,8 +169,18 @@ export interface JuryAssignment {
   role: string;
   status: string;
   conflict_declared: boolean;
+  conflict_reason: string;
   assigned_at: string;
 }
+
+export interface JurorProfile { user_id: number; full_name: string; email: string; expertise: string[]; institution: string; max_assignments: number; active_assignments: number; }
+export function getJurors(): Promise<JurorProfile[]> { return jsonRequest(`${API_URL}/jurors`); }
+export async function updateJurorProfile(userId: number, input: { expertise: string[]; institution: string; max_assignments: number }): Promise<void> { const res = await fetch(`${API_URL}/jurors/${userId}/profile`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('jury-auth-token') ?? ''}` }, body: JSON.stringify(input) }); if (!res.ok) throw new Error(`Jury profile update failed: ${res.status}`); }
+export interface Appeal { id: number; project_id: number; submitted_by: string; reason: string; deadline: string | null; committee: string[]; status: string; decision_reason: string; created_at: string; resolved_at: string | null; }
+export function getAppeals(projectId: number): Promise<Appeal[]> { return jsonRequest(`${API_URL}/projects/${projectId}/appeals`); }
+export function createAppeal(projectId: number, input: { submitted_by: string; reason: string; deadline?: string | null; committee: string[] }): Promise<Appeal> { return jsonRequest(`${API_URL}/projects/${projectId}/appeals`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
+export interface EligibilityReport { project_id: number; eligible: boolean; checks: { key: string; label: string; passed: boolean; detail: string }[]; }
+export function getEligibilityReport(projectId: number): Promise<EligibilityReport> { return jsonRequest(`${API_URL}/projects/${projectId}/eligibility`); }
 
 export interface DemoDaySlot {
   id: number;
@@ -137,7 +191,14 @@ export interface DemoDaySlot {
   starts_at: string;
   duration_minutes: number;
   status: string;
+  checked_in_at: string | null;
+  evidence_urls: string[];
+  field_score: number | null;
+  jury_signature: string | null;
+  check_in_token: string;
+  prototype_checklist: string[];
 }
+export function updateDemoDaySlot(slotId: number, input: { status?: string; check_in?: boolean; evidence_urls?: string[]; field_score?: number; jury_signature?: string; prototype_checklist?: string[] }): Promise<DemoDaySlot> { return jsonRequest(`${API_URL}/demo-day/${slotId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
 
 export interface CompetitionReport {
   competition_id: number;
@@ -183,15 +244,25 @@ export type NotificationKind = 'announcement' | 'missing_document' | 'deadline' 
 export interface Notification { id: number; title: string; body: string; kind: NotificationKind; audience: string; category: string | null; created_at: string; }
 export function getNotifications(limit = 50): Promise<Notification[]> { return jsonRequest(`${API_URL}/notifications?limit=${limit}`); }
 export function createNotification(input: Omit<Notification, 'id' | 'created_at'>): Promise<Notification> { return jsonRequest(`${API_URL}/notifications`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
-export function createUser(input: Omit<User, 'id' | 'active' | 'created_at'>): Promise<User> {
+
+export interface EmailCampaign { id: number; subject: string; body: string; audience: string; category: string | null; recipient_count: number; status: string; created_at: string; }
+export function getEmailCampaigns(limit = 50): Promise<EmailCampaign[]> { return jsonRequest(`${API_URL}/email-campaigns?limit=${limit}`); }
+export function createEmailCampaign(input: Omit<EmailCampaign, 'id' | 'recipient_count' | 'status' | 'created_at'>): Promise<EmailCampaign> { return jsonRequest(`${API_URL}/email-campaigns`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
+export function dispatchEmailCampaign(id: number): Promise<EmailCampaign> { return jsonRequest(`${API_URL}/email-campaigns/${id}/dispatch`, { method: 'POST' }); }
+export function createUser(input: Omit<User, 'id' | 'active' | 'must_change_password' | 'created_at'> & { password: string }): Promise<User> {
   return jsonRequest(`${API_URL}/users`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 }
 export function updateUser(id: number, input: Partial<Pick<User, 'role' | 'active' | 'competition_id' | 'category'>>): Promise<User> {
   return jsonRequest(`${API_URL}/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 }
+export interface PasswordResetToken { token: string; expires_at: string; }
+export function issuePasswordReset(id: number): Promise<PasswordResetToken> { return jsonRequest(`${API_URL}/users/${id}/password-reset`, { method: 'POST' }); }
+export async function confirmPasswordReset(input: { token: string; new_password: string }): Promise<void> { const response = await fetch(`${API_URL}/auth/password-reset/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); if (!response.ok) throw new Error(`Password reset failed: ${response.status}`); }
 
 export interface Project {
   id: number;
+  competition_id: number;
+  team_id: number | null;
   name: string;
   category: string;
   kpi_scores: KpiScore[];
@@ -262,13 +333,14 @@ export interface ActivityEntry {
 }
 
 export async function getCategories(): Promise<CategoryTemplate[]> {
-  const res = await fetch(`${API_URL}/categories`);
+  const res = await fetch(`${API_URL}/categories`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Failed to load categories: ${res.status}`);
   return res.json();
 }
 
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const headers = authHeaders(init?.headers);
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok) throw new Error(`API request failed: ${res.status} ${await res.text()}`);
   return res.json();
 }
@@ -342,7 +414,7 @@ export function createTeam(competitionId: number, name: string): Promise<Team> {
 export async function updateTeamStatus(teamId: number, status: string): Promise<void> {
   const res = await fetch(`${API_URL}/teams/${teamId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ status }),
   });
   if (!res.ok) throw new Error(`Failed to update team status: ${res.status} ${await res.text()}`);
@@ -350,7 +422,7 @@ export async function updateTeamStatus(teamId: number, status: string): Promise<
 
 export function addTeamMember(
   teamId: number,
-  input: { full_name: string; email: string; role?: string; is_scholar: boolean },
+  input: { full_name: string; email: string; role?: string; is_scholar: boolean; birth_year?: number | null; education_level?: string },
 ): Promise<TeamMember> {
   return jsonRequest(`${API_URL}/teams/${teamId}/members`, {
     method: 'POST',
@@ -366,13 +438,14 @@ export function getDemoDaySlots(competitionId: number): Promise<DemoDaySlot[]> {
 export function getCompetitionReport(competitionId: number): Promise<CompetitionReport> {
   return jsonRequest(`${API_URL}/competitions/${competitionId}/report`);
 }
+export async function finalizeCompetition(competitionId: number, input: { minutes: string; signed_by: string }): Promise<void> { const res = await fetch(`${API_URL}/competitions/${competitionId}/finalize`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(input) }); if (!res.ok) throw new Error(`Finalization failed: ${res.status} ${await res.text()}`); }
 
 export function getTeamSubmissions(teamId: number): Promise<Submission[]> {
   return jsonRequest(`${API_URL}/teams/${teamId}/submissions`);
 }
 
 export async function getAiEvaluation(projectId: number): Promise<AiEvaluation | null> {
-  const res = await fetch(`${API_URL}/projects/${projectId}/ai-evaluation`);
+  const res = await fetch(`${API_URL}/projects/${projectId}/ai-evaluation`, { headers: authHeaders() });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`AI evaluation request failed: ${res.status}`);
   return res.json();
@@ -406,27 +479,29 @@ export function getJuryAssignments(projectId: number): Promise<JuryAssignment[]>
 
 export async function getProjects(category?: string): Promise<Project[]> {
   const url = category ? `${API_URL}/projects?category=${encodeURIComponent(category)}` : `${API_URL}/projects`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Failed to load projects: ${res.status}`);
   return res.json();
 }
 
-export async function uploadProject(name: string, category: string, file: File): Promise<Project> {
+export async function uploadProject(name: string, category: string, competitionId: number, file: File, teamId?: number): Promise<Project> {
   const formData = new FormData();
   formData.append('name', name);
   formData.append('category', category);
+  formData.append('competition_id', String(competitionId));
+  if (teamId) formData.append('team_id', String(teamId));
   formData.append('file', file);
 
-  const res = await fetch(`${API_URL}/projects/upload`, { method: 'POST', body: formData });
+  const res = await fetch(`${API_URL}/projects/upload`, { method: 'POST', headers: authHeaders(), body: formData });
   if (!res.ok) throw new Error(`Failed to upload project: ${res.status} ${await res.text()}`);
   return res.json();
 }
 
-export async function updateRanking(category: string, order: number[], changedBy: string): Promise<void> {
+export async function updateRanking(category: string, order: number[]): Promise<void> {
   const res = await fetch(`${API_URL}/ranking`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ category, order, changed_by: changedBy }),
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ category, order }),
   });
   if (!res.ok) throw new Error(`Failed to update ranking: ${res.status}`);
 }
@@ -437,7 +512,7 @@ export async function updateProject(
 ): Promise<Project> {
   const res = await fetch(`${API_URL}/projects/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(update),
   });
   if (!res.ok) throw new Error(`Failed to update project: ${res.status}`);
@@ -448,8 +523,14 @@ export function projectFileUrl(id: number): string {
   return `${API_URL}/projects/${id}/file`;
 }
 
+export async function fetchProtectedFile(url: string): Promise<Response> {
+  const response = await fetch(url, { headers: authHeaders() });
+  if (!response.ok) throw new Error(`File download failed: ${response.status}`);
+  return response;
+}
+
 export async function getProjectDocument(id: number): Promise<Document | null> {
-  const res = await fetch(`${API_URL}/projects/${id}/document`);
+  const res = await fetch(`${API_URL}/projects/${id}/document`, { headers: authHeaders() });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Failed to load document: ${res.status}`);
   return res.json();
@@ -458,7 +539,7 @@ export async function getProjectDocument(id: number): Promise<Document | null> {
 export async function getActivity(category?: string, limit = 10): Promise<ActivityEntry[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (category) params.set('category', category);
-  const res = await fetch(`${API_URL}/activity?${params}`);
+  const res = await fetch(`${API_URL}/activity?${params}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Failed to load activity: ${res.status}`);
   return res.json();
 }
