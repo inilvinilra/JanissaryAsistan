@@ -7,7 +7,7 @@ use kys_engine::parser;
 use kys_engine::research;
 
 use axum::{
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, State, DefaultBodyLimit},
     http::{StatusCode, header},
     response::{Json, IntoResponse},
     routing::{get, post, put},
@@ -178,6 +178,7 @@ async fn main() -> Result<()> {
         .route("/api/settings/serper-key", get(get_serper_key).put(set_serper_key))
         .route("/api/settings/system-prompt", get(get_system_prompt).put(set_system_prompt))
         .with_state(state)
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(cors);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
@@ -437,7 +438,8 @@ async fn analyze_project(
     std::fs::write(&file_path, &file_bytes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Parser çalıştır
-    let mut document = match parser::parse_file(&file_path) {
+    let file_path_clone = file_path.clone();
+    let mut document = match tokio::task::spawn_blocking(move || parser::parse_file(&file_path_clone)).await.unwrap() {
         Ok(d) => d,
         Err(e) => {
             let _ = std::fs::remove_file(&file_path);
