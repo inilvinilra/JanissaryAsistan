@@ -124,10 +124,15 @@ async fn main() {
     if std::env::var("EMAIL_WEBHOOK_URL").is_ok() {
         tokio::spawn(email_delivery_worker(state.clone()));
     }
-    let allowed_origin: HeaderValue = std::env::var("PUBLIC_FRONTEND_ORIGIN")
-        .unwrap_or_else(|_| "http://127.0.0.1:4321".into())
-        .parse()
-        .expect("PUBLIC_FRONTEND_ORIGIN must be a valid origin");
+    let cors = match std::env::var("PUBLIC_FRONTEND_ORIGIN") {
+        Ok(origin) => CorsLayer::new()
+            .allow_origin(origin.parse::<HeaderValue>().expect("PUBLIC_FRONTEND_ORIGIN must be a valid origin")),
+        Err(_) if production_mode => panic!("PUBLIC_FRONTEND_ORIGIN must be configured in production"),
+        Err(_) => CorsLayer::new().allow_origin([
+            HeaderValue::from_static("http://127.0.0.1:4321"),
+            HeaderValue::from_static("http://localhost:4321"),
+        ]),
+    };
 
     let app = Router::new()
         .route("/", get(root))
@@ -263,10 +268,7 @@ async fn main() {
         .route("/test/parse", get(test_parse))
         .route("/test/search", get(test_search))
         .layer(
-            CorsLayer::new()
-                .allow_origin(allowed_origin)
-                .allow_methods(Any)
-                .allow_headers(Any),
+            cors.allow_methods(Any).allow_headers(Any),
         )
         .layer(middleware::from_fn_with_state(state.clone(), rate_limit))
         .layer(middleware::from_fn_with_state(

@@ -132,6 +132,7 @@ Tasks provided by the product owner will be added here verbatim and tracked sepa
 | 2026-08-12 | AI-01 | Added an authenticated local HTTP contract fixture and validated backend project scoring through the configured external-adapter path. | Live project creation persisted a complete three-KPI score response from the fixture. |
 | 2026-08-12 | OPS-01 | Added optional Alertmanager Compose service, Prometheus forwarding, webhook template, and production environment variable. | Monitoring Compose configuration passed; local Alertmanager readiness returned `200` and configuration load was logged. |
 | 2026-08-12 | TEST-01 | Added a consolidated automated and live verification report. | `TEST-EXECUTION-REPORT.md` records all completed evidence and remaining human ownership. |
+| 2026-08-13 | OPS-01, TEST-01 | Fixed the development CORS mismatch that prevented a dashboard opened at `localhost:4321` from reaching an API that allowed only `127.0.0.1:4321`. Development now permits both local origins; production fails fast unless an explicit `PUBLIC_FRONTEND_ORIGIN` is configured. | Backend tests: 24/24 passed; live health and login preflight responses returned the expected `Access-Control-Allow-Origin: http://localhost:4321`; administrator login returned `200`. |
 
 ## Next Execution Order
 
