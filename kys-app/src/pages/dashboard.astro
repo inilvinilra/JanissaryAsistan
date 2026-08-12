@@ -1,0 +1,45 @@
+---
+import '../styles/globals.css';
+import { DashboardPage } from '../components/dashboard/DashboardPage';
+---
+
+<html lang="tr">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<title>JanissaryAsistan - Jüri Dashboard</title>
+		<meta name="description" content="JanissaryAsistan Karar Yönetim Sistemi - Jüri Analiz Paneli" />
+		<script is:inline>
+			// Sayfa yüklenmeden önce tema uygula (flash önleme)
+			// Ctrl+F5 hard refresh'te bile siyah ekran olmasın diye
+			// arkaplanı direkt style olarak uyguluyoruz
+			(function() {
+				var stored = typeof localStorage !== 'undefined' && localStorage.getItem('theme');
+				var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+				var isDark = stored === 'dark' || (!stored && prefersDark);
+				
+				if (isDark) {
+					document.documentElement.classList.add('dark');
+					// Dark modda pitch-black arkaplan
+					document.documentElement.style.backgroundColor = 'hsl(0 0% 2%)';
+					document.documentElement.style.color = 'hsl(0 0% 90%)';
+				} else {
+					document.documentElement.classList.remove('dark');
+					// Light modda açık arkaplan
+					document.documentElement.style.backgroundColor = 'hsl(220 20% 97%)';
+					document.documentElement.style.color = 'hsl(222 30% 10%)';
+				}
+			})();
+		</script>
+	</head>
+	<body class="bg-background text-foreground">
+    <!-- 
+      DashboardPage tek bir React adası olarak tüm içeriği kapsıyor.
+      Bu sayede AuthGuard children'larını doğru şekilde render edebilir.
+      Önceki yapıda AuthGuard ve diğer bileşenler ayrı ayrı client:only islands
+      olduğu için AuthGuard'ın children prop'u çalışmıyordu — bu asıl crash sebebiydi.
+    -->
+    <DashboardPage client:only="react" />
+	</body>
+</html>

@@ -1,0 +1,28 @@
+---
+import '../styles/globals.css';
+import { LoginForm } from '../components/auth/LoginForm';
+import { Image } from 'astro:assets';
+import logoImg from '../assets/jannisary.png';
+import logoWhiteImg from '../assets/beyaz.png';
+---
+
+<html lang="tr">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<title>JanissaryAsistan - Giriş Yap</title>
+		<meta name="description" content="JanissaryAsistan Jüri Sistemi - Güvenli Giriş" />
+	</head>
+	<body class="bg-slate-100 dark:bg-background text-slate-900 dark:text-foreground font-sans antialiased flex flex-col items-center justify-center min-h-screen">
+    <div class="w-full max-w-sm px-4">
+      <div class="flex flex-col items-center text-center mb-8">
+        <Image src={logoImg} alt="Janissary Logo" class="h-36 w-auto max-w-[320px] object-contain mb-4 dark:hidden" />
+        <Image src={logoWhiteImg} alt="Janissary Logo White" class="h-36 w-auto max-w-[320px] object-contain mb-4 hidden dark:block" />
+        <h1 class="text-3xl font-bold text-slate-800 dark:text-slate-100">JanissaryAsistan</h1>
+        <p class="text-slate-500 dark:text-slate-400 text-sm mt-1">Karar Yönetim Sistemi</p>
+      </div>
+		  <LoginForm client:only="react" />
+    </div>
+	</body>
+</html>

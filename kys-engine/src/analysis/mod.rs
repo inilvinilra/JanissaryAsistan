@@ -1,9 +1,13 @@
-// KYS - Analiz ve Puanlama Motoru
+// JanissaryAsistan - Analiz ve Puanlama Motoru
 // Benzerlik hesaplama + kural tabanlı değerlendirme
 
 use crate::models::*;
 use crate::parser::extract_keywords;
 use std::collections::HashSet;
+use reqwest::Client;
+use serde_json::Value;
+
+pub mod taxonomy;
 
 /// Proje belgesi ile internet kaynakları arasındaki benzerliği hesaplar
 pub fn compute_similarity(
@@ -21,7 +25,7 @@ pub fn compute_similarity(
             let intersection: HashSet<&String> = doc_keywords.intersection(&source_keywords).collect();
             let union: HashSet<&String> = doc_keywords.union(&source_keywords).collect();
 
-            let similarity_score = if union.is_empty() {
+            let mut similarity_score = if union.is_empty() {
                 0.0
             } else {
                 intersection.len() as f64 / union.len() as f64
@@ -33,7 +37,16 @@ pub fn compute_similarity(
                 .cloned()
                 .collect();
 
-            let explanation = generate_similarity_explanation(similarity_score, &matched_keywords);
+            let mut explanation = generate_similarity_explanation(similarity_score, &matched_keywords);
+            
+            // Eğer PDF veya GitHub reposu ise ve kelimelerden bağımsız bir link bulunmuşsa (kullanıcının istediği gibi)
+            // Özel bir nihai link uyarısı ekle
+            if result.source_type == "pdf" {
+                explanation = format!("{} (Nihai Link Uyarısı: Bu bir PDF dokümanıdır. Lütfen içerik benzerliği ihtimaline karşı bağlantıyı bizzat kontrol edin.)", explanation);
+                if similarity_score < 0.20 { similarity_score += 0.30; } // PDF'ler her zaman potansiyel risktir
+            } else if result.source_type == "github" && similarity_score > 0.15 {
+                explanation = format!("{} (Nihai Link Uyarısı: Bu GitHub reposundaki kod ve mimari ile ciddi benzerlikler olabilir. Lütfen kaynak kodları kıyaslayın.)", explanation);
+            }
 
             matches.push(SimilarityMatch {
                 title: result.title.clone(),
@@ -91,33 +104,169 @@ fn generate_similarity_explanation(score: f64, matched_keywords: &[String]) -> S
 }
 
 /// Kural tabanlı belge puanlaması (AI olmadan)
-pub fn score_document(document: &Document) -> ScoreCard {
+pub fn score_document(document: &Document, category_fit: f64, technical_depth: f64, classified_category: Option<String>, semantic_reason: Option<String>) -> ScoreCard {
     ScoreCard {
-        category_fit: score_category_fit(document),
+        category_fit,
+        classified_category,
         completeness: score_completeness(document),
         reference_quality: score_references(document),
-        technical_depth: score_technical_depth(document),
+        technical_depth,
         originality: 75.0, // Varsayılan - benzerlik analizi sonrası güncellenir
+        ai_probability: 0.0, // Varsayılan - benzerlik ve AI analizi sonrası güncellenir
+        semantic_reason,
     }
 }
 
-/// Kategori uyumu: kritik bölümler var mı?
-fn score_category_fit(doc: &Document) -> f64 {
-    // Şimdilik başlık ve keyword analizi ile temel skor
-    // Tauri UI'da kategori seçimi yapılınca bu iyileşecek
-    let keyword_count = doc.keywords.len();
-    let heading_count = doc.headings.len();
+/// OpenAI/OpenRouter ile dinamik kategori uyumu ve teknik derinlik hesaplaması
+pub async fn evaluate_with_ai(
+    document: &Document,
+    categories: &[(i32, String, String)],
+) -> (f64, f64, f64, Option<String>, Option<String>) {
+    use tracing::{info, warn, error};
 
-    let base = match keyword_count {
-        0..=5 => 40.0,
-        6..=10 => 60.0,
-        11..=20 => 75.0,
-        _ => 85.0,
+    let api_key = match std::env::var("OPENAI_API_KEY") {
+        Ok(key) if !key.is_empty() => key,
+        _ => {
+            warn!("OPENAI_API_KEY bulunamadı — AI analizi atlanıyor");
+            return (75.0, score_technical_depth(document), 0.0, Some("Genel (AI Kapalı)".to_string()), None);
+        }
     };
 
-    let heading_bonus = (heading_count as f64 * 2.0).min(15.0);
-    (base + heading_bonus).min(100.0)
+    let categories_json = serde_json::to_string(&categories).unwrap_or_default();
+
+    let default_prompt = format!(
+        "Aşağıdaki proje metnini dikkatle oku ve incele:\n---\n{}\n---\n\n\
+        Kategorilerden bu projeye en uygun olanı seç: {}\n\n\
+        DİKKAT: Sadece ve SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:\n\
+        {{\"category_name\": \"...\", \"category_fit\": 80, \"technical_depth\": 75, \"ai_probability\": 15.5, \"reason\": \"...\"}}",
+        document.raw_text.chars().take(2000).collect::<String>(),
+        categories_json
+    );
+
+    let system_prompt_env = std::env::var("SYSTEM_PROMPT").unwrap_or_default();
+
+    let prompt = if !system_prompt_env.is_empty() {
+        format!(
+            "{}\n\nProje Metni (İlk 2000 karakter):\n{}\n\nKategoriler: {}\n\n\
+            SADECE şu JSON formatında yanıt ver:\n\
+            {{\"category_name\": \"...\", \"category_fit\": 80, \"technical_depth\": 75, \"ai_probability\": 15.5, \"reason\": \"Açıklama...\"}} ",
+            system_prompt_env,
+            document.raw_text.chars().take(2000).collect::<String>(),
+            categories_json
+        )
+    } else {
+        default_prompt
+    };
+
+    let model_name = std::env::var("AI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    info!("AI analizi başlatılıyor: model={}", model_name);
+
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap_or_default();
+
+    // response_format kaldırıldı — tüm modellerle uyumlu olması için
+    let request_body = serde_json::json!({
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": "Sen bir proje değerlendirme asistanısın. Yanıtını SADECE geçerli JSON formatında ver, başka metin ekleme."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.2,
+        "max_tokens": 500
+    });
+
+    let api_url = if api_key.starts_with("sk-or-") {
+        "https://openrouter.ai/api/v1/chat/completions"
+    } else {
+        "https://api.openai.com/v1/chat/completions"
+    };
+
+    info!("API isteği gönderiliyor: {}", api_url);
+
+    let resp_result = client.post(api_url)
+        .bearer_auth(&api_key)
+        .header("HTTP-Referer", "http://localhost:8080")
+        .header("X-Title", "JanissaryAsistan")
+        .json(&request_body)
+        .send()
+        .await;
+
+    match resp_result {
+        Err(e) => {
+            error!("AI API bağlantı hatası: {}", e);
+            return (75.0, score_technical_depth(document), 0.0, Some("Genel (Bağlantı Hatası)".to_string()), None);
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            info!("AI API yanıt kodu: {}", status);
+
+            match resp.text().await {
+                Err(e) => {
+                    error!("AI API yanıt okunamadı: {}", e);
+                }
+                Ok(raw_text) => {
+                    info!("AI API ham yanıt (ilk 500 karakter): {}", &raw_text.chars().take(500).collect::<String>());
+
+                    // Önce tam JSON parse dene
+                    let content_opt: Option<String> = serde_json::from_str::<Value>(&raw_text)
+                        .ok()
+                        .and_then(|j| j["choices"][0]["message"]["content"].as_str().map(|s| s.to_string()));
+
+                    // Yanıt içinden JSON bloğu çıkar (```json...``` veya {...} formatı)
+                    let json_str = content_opt.as_deref().unwrap_or(&raw_text);
+
+                    // JSON bloğunu bul — önce ```json ... ``` ara, sonra { ... }
+                    let extracted = extract_json_from_text(json_str);
+
+                    if let Ok(parsed) = serde_json::from_str::<Value>(&extracted) {
+                        let cat_name = parsed["category_name"].as_str().unwrap_or("Genel").to_string();
+                        let cat_fit = parsed["category_fit"].as_f64().unwrap_or(75.0);
+                        let tech_depth = parsed["technical_depth"].as_f64().unwrap_or(score_technical_depth(document));
+                        let ai_prob = parsed["ai_probability"].as_f64().unwrap_or(0.0);
+                        let reason = parsed["reason"].as_str().map(|s| s.to_string());
+                        info!("AI analizi başarılı: kategori={}, uyum={}, ai_ihtimal={}", cat_name, cat_fit, ai_prob);
+                        return (cat_fit, tech_depth, ai_prob, Some(cat_name), reason);
+                    } else {
+                        error!("AI yanıtı JSON olarak parse edilemedi. Ham: {}", &extracted.chars().take(300).collect::<String>());
+                    }
+                }
+            }
+        }
+    }
+
+    (75.0, score_technical_depth(document), 0.0, Some("Genel (Parse Hatası)".to_string()), None)
 }
+
+/// Metinden JSON bloğunu çıkarır (```json...``` veya ilk { ... } bloğu)
+fn extract_json_from_text(text: &str) -> String {
+    // Önce ```json ... ``` bloğu ara
+    if let Some(start) = text.find("```json") {
+        let after = &text[start + 7..];
+        if let Some(end) = after.find("```") {
+            return after[..end].trim().to_string();
+        }
+    }
+    // Sonra ``` ... ``` bloğu ara
+    if let Some(start) = text.find("```") {
+        let after = &text[start + 3..];
+        if let Some(end) = after.find("```") {
+            return after[..end].trim().to_string();
+        }
+    }
+    // Son olarak { ... } bloğu ara
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            if end > start {
+                return text[start..=end].to_string();
+            }
+        }
+    }
+    text.to_string()
+}
+
+
 
 /// Bölüm tamlığı: özet, giriş, sonuç, yöntem var mı?
 fn score_completeness(doc: &Document) -> f64 {

@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment variables - SECRET! Never commit!
+.env
+.env.local
+.env.*.local
+.env.production

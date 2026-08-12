@@ -1,4 +1,4 @@
-// KYS - Veri Modelleri
+// JanissaryAsistan - Veri Modelleri
 // Sistemin tüm katmanları bu yapıları kullanır
 
 use serde::{Deserialize, Serialize};
@@ -14,11 +14,15 @@ pub struct Document {
     pub keywords: Vec<String>,
     pub references: Vec<String>,
     pub has_references: bool,
+    pub has_bibliography: bool,
+    pub reference_count: usize,
+    pub classified_category: Option<String>,
     pub has_abstract: bool,
     pub has_conclusion: bool,
     pub has_methodology: bool,
     pub language: Language,
     pub sections: Vec<Section>,
+    pub author: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,10 +92,13 @@ impl SimilarityReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoreCard {
     pub category_fit: f64,      // Kategori uyumu (0-100)
+    pub classified_category: Option<String>, // Sistem tarafından bulunan kategori
     pub completeness: f64,      // Bölüm tamlığı (0-100)
     pub reference_quality: f64, // Kaynak kalitesi (0-100)
     pub technical_depth: f64,   // Teknik derinlik (0-100)
     pub originality: f64,       // Özgünlük (0-100, similarity'den gelir)
+    pub ai_probability: f64,    // Yapay Zeka ile üretilme ihtimali (0-100)
+    pub semantic_reason: Option<String>, // AI tarafından verilen anlamsal değerlendirme sebebi
 }
 
 impl ScoreCard {
@@ -130,6 +137,12 @@ impl ScoreCard {
         }
         if self.originality < 50.0 {
             reasons.push("Benzer çalışmalar bulundu".to_string());
+        }
+
+        if let Some(sr) = &self.semantic_reason {
+            if !sr.is_empty() {
+                reasons.push(format!("AI Notu: {}", sr));
+            }
         }
 
         if reasons.is_empty() {

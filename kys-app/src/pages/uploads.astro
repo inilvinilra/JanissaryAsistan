@@ -1,0 +1,33 @@
+---
+import '../styles/globals.css';
+import { UploadsPage } from '../components/dashboard/UploadsPage';
+---
+
+<html lang="tr">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<title>JanissaryAsistan - Yüklenenler</title>
+		<meta name="description" content="JanissaryAsistan - Yüklenen projeler listesi" />
+		<script is:inline>
+			(function() {
+				var stored = typeof localStorage !== 'undefined' && localStorage.getItem('theme');
+				var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+				var isDark = stored === 'dark' || (!stored && prefersDark);
+				if (isDark) {
+					document.documentElement.classList.add('dark');
+					document.documentElement.style.backgroundColor = 'hsl(0 0% 2%)';
+					document.documentElement.style.color = 'hsl(0 0% 90%)';
+				} else {
+					document.documentElement.classList.remove('dark');
+					document.documentElement.style.backgroundColor = 'hsl(220 20% 97%)';
+					document.documentElement.style.color = 'hsl(222 30% 10%)';
+				}
+			})();
+		</script>
+	</head>
+	<body class="bg-background text-foreground">
+    <UploadsPage client:only="react" />
+	</body>
+</html>
