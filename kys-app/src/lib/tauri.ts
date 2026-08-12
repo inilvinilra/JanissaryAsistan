@@ -280,7 +280,7 @@ function getMockProjectDetail(id: string) {
         { title: "Geçen Yılın Projesi", source_type: "Arşiv", similarity_score: p.sim / 3 },
       ] : [{ title: "Genel Konsept Benzerliği", source_type: "Blog", similarity_score: 0.04 }],
     },
-    pdf_url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+    pdf_url: undefined, // Mock veri için PDF gösterme denemesini iptal et (CORS hatasını engeller)
   }
 }
 
