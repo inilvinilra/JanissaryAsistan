@@ -133,6 +133,7 @@ Tasks provided by the product owner will be added here verbatim and tracked sepa
 | 2026-08-12 | OPS-01 | Added optional Alertmanager Compose service, Prometheus forwarding, webhook template, and production environment variable. | Monitoring Compose configuration passed; local Alertmanager readiness returned `200` and configuration load was logged. |
 | 2026-08-12 | TEST-01 | Added a consolidated automated and live verification report. | `TEST-EXECUTION-REPORT.md` records all completed evidence and remaining human ownership. |
 | 2026-08-13 | OPS-01, TEST-01 | Fixed the development CORS mismatch that prevented a dashboard opened at `localhost:4321` from reaching an API that allowed only `127.0.0.1:4321`. Development now permits both local origins; production fails fast unless an explicit `PUBLIC_FRONTEND_ORIGIN` is configured. | Backend tests: 24/24 passed; live health and login preflight responses returned the expected `Access-Control-Allow-Origin: http://localhost:4321`; administrator login returned `200`. |
+| 2026-08-13 | OPS-01, TEST-01 | Added a same-origin `/api` development proxy so browser sessions no longer call the local backend directly. This removes browser-specific loopback/CORS interference while production continues to use its explicitly configured API origin. | `http://localhost:4321/api/health` returned `200`; system Chromium dashboard workflows passed 2/2 through the proxy. |
 
 ## Next Execution Order
 
