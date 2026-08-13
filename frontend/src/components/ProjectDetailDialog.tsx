@@ -39,6 +39,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { AiAnalysisWorkspace } from '@/components/AiAnalysisWorkspace';
+import { ProjectCopilotPanel } from '@/components/ProjectCopilotPanel';
+import { chooseDesktopProjectFile, isDesktopApp, saveDesktopFile } from '@/lib/desktop';
 
 const STATUSES: ProjectStatus[] = ['new', 'reviewing', 'finalist', 'rejected'];
 const STATUS_KEYS: Record<ProjectStatus, string> = {
@@ -61,6 +64,10 @@ export function ProjectDetailDialog({
 }) {
   const { t } = useLocale();
   const { showToast } = useToast();
+  const currentRole = typeof localStorage === 'undefined' ? 'read_only' : (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').role || 'read_only'; } catch { return 'read_only'; } })();
+  const canViewAiAnalysis = currentRole !== 'jury_member' && currentRole !== 'observer' && currentRole !== 'read_only';
+  const canRunResearch = ['system_admin', 'competition_manager', 'chief_judge'].includes(currentRole);
+  const canUseCopilot = ['system_admin', 'competition_manager', 'chief_judge'].includes(currentRole);
   const authenticatedName = typeof localStorage === 'undefined' ? 'Authenticated user' : (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').full_name || 'Authenticated user'; } catch { return 'Authenticated user'; } })();
   const [document, setDocument] = useState<Document | null | undefined>(undefined);
   const [aiEvaluation, setAiEvaluation] = useState<AiEvaluation | null | undefined>(undefined);
@@ -97,13 +104,13 @@ export function ProjectDetailDialog({
     setNotes(project.notes);
     setReviewCompleted(project.review_completed);
     setTagText(project.tags.join(', '));
-    Promise.all([getProjectDocument(project.id), getAiEvaluation(project.id), getJuryScores(project.id), getJuryAssignments(project.id), getProjectMetadata(project.id), getProjectFiles(project.id), getCompetitions(), getAppeals(project.id), getEligibilityReport(project.id)])
+    Promise.all([getProjectDocument(project.id).catch(() => null), canViewAiAnalysis ? getAiEvaluation(project.id).catch(() => null) : Promise.resolve(null), getJuryScores(project.id).catch(() => []), getJuryAssignments(project.id).catch(() => []), getProjectMetadata(project.id).catch(() => null), getProjectFiles(project.id).catch(() => []), getCompetitions().catch(() => []), getAppeals(project.id).catch(() => []), getEligibilityReport(project.id).catch(() => null)])
       .then(async ([nextDocument, nextAiEvaluation, nextJuryScores, nextJuryAssignments, nextMetadata, nextFiles, competitions, nextAppeals, nextEligibility]) => {
         setDocument(nextDocument);
         setAiEvaluation(nextAiEvaluation);
         setJuryScores(nextJuryScores);
         setJuryAssignments(nextJuryAssignments);
-        setMetadata(nextMetadata); setInstitution(nextMetadata.institution); setKeywords(nextMetadata.keywords.join(', ')); setGithubUrl(nextMetadata.github_url ?? ''); setDemoUrl(nextMetadata.demo_url ?? ''); setPrototypeDescription(nextMetadata.prototype_description);
+        setMetadata(nextMetadata); setInstitution(nextMetadata?.institution ?? ''); setKeywords(nextMetadata?.keywords.join(', ') ?? ''); setGithubUrl(nextMetadata?.github_url ?? ''); setDemoUrl(nextMetadata?.demo_url ?? ''); setPrototypeDescription(nextMetadata?.prototype_description ?? '');
         setProjectFiles(nextFiles);
         setAppeals(nextAppeals);
         setEligibility(nextEligibility);
@@ -115,7 +122,7 @@ export function ProjectDetailDialog({
         setDocument(null);
         setAiEvaluation(null);
       });
-  }, [open, project]);
+  }, [open, project, canViewAiAnalysis]);
 
   if (!project) return null;
 
@@ -178,6 +185,11 @@ export function ProjectDetailDialog({
     finally { setUploadingFile(false); }
   }
 
+  async function chooseAndUploadFile() {
+    const file = await chooseDesktopProjectFile();
+    if (file) await uploadFile(file);
+  }
+
   async function compareLatestVersions() {
     if (projectFiles.length < 2) return;
     const [latest, previous] = projectFiles;
@@ -189,7 +201,9 @@ export function ProjectDetailDialog({
   async function openProtectedFile(url: string, download = false) {
     try {
       const response = await fetchProtectedFile(url);
-      const blobUrl = URL.createObjectURL(await response.blob());
+      const blob = await response.blob();
+      if (download && await saveDesktopFile(blob, 'project-file')) return;
+      const blobUrl = URL.createObjectURL(blob);
       const link = window.document.createElement('a');
       link.href = blobUrl;
       if (download) link.download = 'proje-dosyasi'; else link.target = '_blank';
@@ -200,7 +214,7 @@ export function ProjectDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <div className="flex items-center justify-between gap-3"><DialogTitle>{blindReview ? `PRJ-${String(project.id).padStart(6, '0')}` : project.name}</DialogTitle><Button type="button" size="sm" variant="outline" onClick={() => setBlindReview((value) => !value)}><EyeOff className="mr-1.5 size-3.5" />{blindReview ? t('showIdentity') : t('enableBlindReview')}</Button></div>
           <DialogDescription>{t('detailTitle')}</DialogDescription>
@@ -237,6 +251,9 @@ export function ProjectDetailDialog({
             )}
           </div>
 
+          {canViewAiAnalysis && <AiAnalysisWorkspace projectId={project.id} evaluation={aiEvaluation} juryScores={juryScores} canRunResearch={canRunResearch} />}
+          {canUseCopilot && <ProjectCopilotPanel projectId={project.id} />}
+
           <div>
             <p className="mb-1.5 text-xs font-semibold tracking-wide uppercase text-muted-foreground">
               {t('notesLabel')}
@@ -268,7 +285,7 @@ export function ProjectDetailDialog({
           {eligibility && <div className="space-y-2 rounded-lg border p-3"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('eligibilityTitle')} · <span className={eligibility.eligible ? 'text-primary' : 'text-destructive'}>{eligibility.eligible ? t('eligible') : t('reviewRequired')}</span></p>{eligibility.checks.map((check) => <div key={check.key} className="flex items-start justify-between gap-3 text-xs"><span>{check.label}<span className="mt-0.5 block text-muted-foreground">{check.detail}</span></span><span className={check.passed ? 'text-primary' : 'text-destructive'}>{check.passed ? t('passed') : t('missing')}</span></div>)}</div>}
 
           <div className="space-y-3 rounded-lg border p-3">
-            <div className="flex items-center justify-between"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('projectFilesTitle')}</p><label className="cursor-pointer rounded-md border px-3 py-1.5 text-xs hover:bg-accent">{uploadingFile ? t('uploading') : t('uploadFile')}<input type="file" className="hidden" accept=".pdf,.txt,.md,.markdown,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp" disabled={uploadingFile} onChange={(e) => { void uploadFile(e.target.files?.[0]); e.currentTarget.value = ''; }} /></label></div>
+            <div className="flex items-center justify-between"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('projectFilesTitle')}</p>{isDesktopApp() ? <button type="button" className="cursor-pointer rounded-md border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed" disabled={uploadingFile} onClick={() => void chooseAndUploadFile()}>{uploadingFile ? t('uploading') : t('uploadFile')}</button> : <label className="cursor-pointer rounded-md border px-3 py-1.5 text-xs hover:bg-accent">{uploadingFile ? t('uploading') : t('uploadFile')}<input type="file" className="hidden" accept=".pdf,.txt,.md,.markdown,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp" disabled={uploadingFile} onChange={(e) => { void uploadFile(e.target.files?.[0]); e.currentTarget.value = ''; }} /></label>}</div>
             <p className="text-muted-foreground text-[11px]">{t('fileVersionDescription')}</p>
             <div className="space-y-1.5">{projectFiles.map((file) => <div key={file.id} className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-xs"><span className="truncate"><strong>v{file.version}</strong> · {file.file_name} <span className="text-muted-foreground">({Math.ceil(file.size_bytes / 1024)} KB · {new Date(file.uploaded_at).toLocaleString()})</span></span><button type="button" className="text-primary shrink-0 hover:underline" onClick={() => void openProtectedFile(projectVersionFileUrl(project.id, file.id))}>{t('viewFile')}</button></div>)}{projectFiles.length === 0 && <p className="text-muted-foreground text-xs">{t('noProjectFiles')}</p>}</div>
             {projectFiles.length > 1 && <><Button variant="outline" size="sm" onClick={() => void compareLatestVersions()}>{t('compareVersions')}</Button>{versionComparison && <p className="rounded-md bg-secondary/60 p-2 text-xs">{versionComparison}</p>}</>}
@@ -289,36 +306,6 @@ export function ProjectDetailDialog({
           </div>
 
           {document === undefined && <p className="text-muted-foreground text-sm">{t('loading')}</p>}
-
-          {aiEvaluation && (
-            <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('aiEvaluationTitle')}</p>
-                <span className="text-muted-foreground text-[11px]">{aiEvaluation.model_version} · {t('aiConfidence')} %{Math.round(aiEvaluation.confidence * 100)}{aiEvaluation.source_file_version ? ` · ${t('fileVersion', { version: String(aiEvaluation.source_file_version) })}` : ''}</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-md bg-background p-2"><p className="text-muted-foreground text-[10px] uppercase">{t('aiScoreLabel')}</p><p className="font-data text-xl font-bold">{aiEvaluation.total_score.toFixed(1)}</p></div>
-                <div className="rounded-md bg-background p-2"><p className="text-muted-foreground text-[10px] uppercase">{t('juryAverageLabel')}</p><p className="font-data text-xl font-bold">{juryScores.length ? (juryScores.reduce((sum, score) => sum + score.total_score, 0) / juryScores.length).toFixed(1) : '—'}</p></div>
-              </div>
-              {aiEvaluation.confidence < 0.6 && <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">{t('lowAiConfidence')}</p>}
-              {juryScores.length > 0 && <p className="text-muted-foreground text-xs">{t('aiJuryDifference')}: <span className="font-data font-semibold">{(aiEvaluation.total_score - juryScores.reduce((sum, score) => sum + score.total_score, 0) / juryScores.length).toFixed(1)}</span></p>}
-              {aiEvaluation.kpi_scores.map((kpi) => (
-                <div key={kpi.name} className="rounded-md border bg-background p-2.5">
-                  <div className="flex items-center justify-between text-xs font-medium"><span>{kpi.name}</span><span className="font-data">{kpi.score.toFixed(0)}/100</span></div>
-                  <p className="text-muted-foreground mt-1 text-xs">{kpi.reason}</p>
-                  {kpi.evidence.length > 0 && <p className="text-primary mt-1 text-[11px]">{t('aiEvidence')}: {kpi.evidence.join(', ')}</p>}
-                </div>
-              ))}
-              <div className="grid gap-2 text-xs sm:grid-cols-2">
-                <div><p className="font-semibold text-emerald-700">{t('aiStrengths')}</p><ul className="mt-1 list-inside list-disc">{aiEvaluation.strengths.map((item) => <li key={item}>{item}</li>)}</ul></div>
-                <div><p className="font-semibold text-destructive">{t('aiWeaknessesRisks')}</p><ul className="mt-1 list-inside list-disc">{[...aiEvaluation.weaknesses, ...aiEvaluation.risks].map((item) => <li key={item}>{item}</li>)}</ul></div>
-              </div>
-              {aiEvaluation.missing_information.length > 0 && <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs"><p className="font-semibold text-amber-700">{t('aiMissingInformation')}</p><ul className="mt-1 list-inside list-disc">{aiEvaluation.missing_information.map((item) => <li key={item}>{item}</li>)}</ul></div>}
-              {aiEvaluation.sources.length > 0 && <div className="text-xs"><p className="font-semibold">{t('aiSources')}</p><ul className="text-primary mt-1 list-inside list-disc">{aiEvaluation.sources.map((source) => <li key={source} className="truncate">{source}</li>)}</ul></div>}
-              {aiEvaluation.similar_projects.length > 0 && <div className="text-xs"><p className="font-semibold">{t('aiSimilarProjects')}</p><div className="mt-1 space-y-1.5">{aiEvaluation.similar_projects.map((similar) => <div key={`${similar.project_id ?? similar.name}-${similar.similarity}`} className="rounded-md border bg-background p-2"><div className="flex items-center justify-between"><span className="font-medium">{similar.name}</span><span className="font-data text-muted-foreground">{Math.round(similar.similarity * 100)}%</span></div><p className="text-muted-foreground mt-0.5">{similar.reason}</p></div>)}</div></div>}
-              <p className="text-muted-foreground text-[11px]">{t('aiEvaluatedAt')}: {new Date(aiEvaluation.evaluated_at).toLocaleString()}</p>
-            </div>
-          )}
 
           {juryAssignments.length > 0 && (
             <div className="rounded-lg border p-3">

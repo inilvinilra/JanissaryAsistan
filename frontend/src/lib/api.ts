@@ -151,6 +151,33 @@ export interface AiEvaluation {
   evaluated_at: string;
 }
 
+export interface ResearchSource {
+  title: string;
+  url: string | null;
+  source_type: string;
+  snippet: string;
+  matched_terms: string[];
+  similarity: number;
+  explanation: string;
+}
+
+export interface ProjectResearchAnalysis {
+  project_id: number;
+  source_file_version: number | null;
+  originality_score: number;
+  originality_label: string;
+  query_terms: string[];
+  sources: ResearchSource[];
+  analyzed_at: string;
+}
+
+export interface CopilotResponse {
+  answer: string;
+  mode: string;
+  citations: string[];
+  suggested_questions: string[];
+}
+
 export interface JuryScore {
   id: number;
   project_id: number;
@@ -460,6 +487,29 @@ export function upsertAiEvaluation(
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(evaluation),
+  });
+}
+
+export async function getProjectResearch(projectId: number): Promise<ProjectResearchAnalysis | null> {
+  const response = await fetch(`${API_URL}/projects/${projectId}/research`, { headers: authHeaders() });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Research analysis request failed: ${response.status}`);
+  return response.json();
+}
+
+export function runProjectResearch(projectId: number, refresh = false): Promise<ProjectResearchAnalysis> {
+  return jsonRequest(`${API_URL}/projects/${projectId}/research`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh }),
+  });
+}
+
+export function askProjectCopilot(projectId: number, question: string): Promise<CopilotResponse> {
+  return jsonRequest(`${API_URL}/projects/${projectId}/copilot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
   });
 }
 

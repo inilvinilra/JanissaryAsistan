@@ -328,6 +328,47 @@ pub struct SimilarProject {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchSource {
+    pub title: String,
+    pub url: Option<String>,
+    pub source_type: String,
+    pub snippet: String,
+    pub matched_terms: Vec<String>,
+    pub similarity: f64,
+    pub explanation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectResearchAnalysis {
+    pub project_id: i32,
+    pub source_file_version: Option<i32>,
+    pub originality_score: f64,
+    pub originality_label: String,
+    pub query_terms: Vec<String>,
+    pub sources: Vec<ResearchSource>,
+    pub analyzed_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResearchRequest {
+    #[serde(default)]
+    pub refresh: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CopilotRequest {
+    pub question: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CopilotResponse {
+    pub answer: String,
+    pub mode: String,
+    pub citations: Vec<String>,
+    pub suggested_questions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiEvaluation {
     pub project_id: i32,
     pub model_version: String,

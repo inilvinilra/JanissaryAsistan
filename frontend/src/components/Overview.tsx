@@ -1,4 +1,4 @@
-import { Trophy } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Sparkles, Trophy } from 'lucide-react';
 
 import type { CategoryTemplate, Project } from '@/lib/api';
 import { useLocale } from '@/lib/locale-context';
@@ -27,6 +27,12 @@ export function Overview({
     : 0;
 
   const topAcrossFields = [...fieldProjects].sort((a, b) => b.ai_score - a.ai_score).slice(0, 8);
+  const unreviewedProjects = fieldProjects.filter((project) => project.status === 'new').length;
+  const lowScoreProjects = fieldProjects.filter((project) => project.ai_score < 60).length;
+  const finalistProjects = fieldProjects.filter((project) => project.status === 'finalist').length;
+  const reviewCoverage = fieldProjects.length
+    ? Math.round(((fieldProjects.length - unreviewedProjects) / fieldProjects.length) * 100)
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -35,6 +41,59 @@ export function Overview({
         <StatTile label={t('overviewFields')} value={fieldCategories.length} delay={80} />
         <StatTile label={t('statAvg')} value={overallAvg} decimals={1} delay={160} />
       </div>
+
+      <Card className="overflow-hidden border-primary/15 bg-gradient-to-br from-card via-card to-primary/[0.035]">
+        <CardHeader className="border-b bg-background/35 py-4">
+          <div className="flex items-center gap-2">
+            <span className="flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <Sparkles className="size-4" />
+            </span>
+            <div>
+              <CardTitle>{t('overviewAiReadiness')}</CardTitle>
+              <p className="text-muted-foreground mt-0.5 text-xs">{t('overviewAiReadinessDescription')}</p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-lg border bg-background/70 p-3">
+            <div className="mb-2 flex items-center gap-2 text-muted-foreground">
+              <ClipboardCheck className="size-3.5" />
+              <span className="text-[11px] font-medium uppercase tracking-wide">{t('overviewReviewCoverage')}</span>
+            </div>
+            <p className="font-data text-2xl font-bold tabular-nums">{reviewCoverage}%</p>
+            <p className="text-muted-foreground mt-1 text-xs">{t('overviewProjectsReviewed', { count: String(fieldProjects.length - unreviewedProjects), total: String(fieldProjects.length) })}</p>
+          </div>
+          <div className="rounded-lg border bg-background/70 p-3">
+            <div className="mb-2 flex items-center gap-2 text-muted-foreground">
+              <AlertTriangle className="size-3.5 text-amber-500" />
+              <span className="text-[11px] font-medium uppercase tracking-wide">{t('overviewAttentionNeeded')}</span>
+            </div>
+            <p className="font-data text-2xl font-bold tabular-nums">{lowScoreProjects}</p>
+            <p className="text-muted-foreground mt-1 text-xs">{t('overviewLowScoreProjects')}</p>
+          </div>
+          <div className="rounded-lg border bg-background/70 p-3">
+            <div className="mb-2 flex items-center gap-2 text-muted-foreground">
+              <CheckCircle2 className="size-3.5 text-emerald-500" />
+              <span className="text-[11px] font-medium uppercase tracking-wide">{t('overviewFinalists')}</span>
+            </div>
+            <p className="font-data text-2xl font-bold tabular-nums">{finalistProjects}</p>
+            <p className="text-muted-foreground mt-1 text-xs">{t('overviewFinalistDescription')}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const nextCategory = fieldProjects.find((project) => project.status === 'new')?.category;
+              if (nextCategory) onSelectCategory(nextCategory);
+            }}
+            disabled={unreviewedProjects === 0}
+            className="rounded-lg border border-dashed bg-background/70 p-3 text-left transition-colors hover:border-primary/45 hover:bg-primary/[0.035] disabled:cursor-default disabled:hover:border-border disabled:hover:bg-background/70"
+          >
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t('overviewNextAction')}</p>
+            <p className="mt-2 text-sm font-semibold">{unreviewedProjects ? t('overviewOpenUnreviewed', { count: String(unreviewedProjects) }) : t('overviewAllReviewed')}</p>
+            <p className="text-muted-foreground mt-1 text-xs">{t('overviewNextActionDescription')}</p>
+          </button>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {fieldCategories.map((cat, i) => {

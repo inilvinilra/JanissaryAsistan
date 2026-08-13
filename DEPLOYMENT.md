@@ -39,7 +39,7 @@ For horizontal backend scaling, all instances must use the same PostgreSQL datab
 To start the optional local monitoring profile, set `ALERT_WEBHOOK_URL` and run `docker compose --profile monitoring up -d`. Prometheus is exposed locally on port `9090` and Alertmanager on port `9093`; production deployment should restrict both ports to monitoring infrastructure.
 
 `ops/backup-crontab.example` is a daily backup schedule template. Replace the connection value through the host secret manager rather than committing it, store generated backups in encrypted restricted storage, and rehearse restoration with `backend/restore-db.sh`.
-| `PUBLIC_FRONTEND_ORIGIN` | Exact HTTPS dashboard origin allowed by API CORS. |
+| `PUBLIC_FRONTEND_ORIGIN` | Comma-separated HTTPS dashboard origins allowed by API CORS. Include `https://tauri.localhost` when distributing the desktop application. |
 | `PUBLIC_API_URL` | API origin compiled into the frontend. |
 
 Optional AI scoring uses `AI_SCORING_URL` and `AI_SCORING_TOKEN`. See [backend/AI-SCORING-CONTRACT.md](backend/AI-SCORING-CONTRACT.md).
@@ -59,9 +59,21 @@ The backend refuses production startup without a valid encryption key. Productio
 
 Use [backend/BACKUP-RESTORE.md](backend/BACKUP-RESTORE.md) for database backup and recovery. Run a restore rehearsal before go-live and schedule backups outside the application container.
 
+## Desktop application
+
+The Tauri shell reuses the current Astro frontend and the same backend API; it does not contain a second authentication or authorization implementation.
+
+```bash
+cd frontend
+npm run desktop:dev
+PUBLIC_API_URL=https://api.example.org npm run desktop:build
+```
+
+The development build uses the local API by default. For a distributed package, compile the API URL from the deployment environment and configure the backend CORS list with both the web dashboard origin and `https://tauri.localhost`. Native file selection and saving remain available only after the normal authenticated API request succeeds.
+
 ## Production checklist
 
-- Terminate TLS at a reverse proxy and set `PUBLIC_FRONTEND_ORIGIN` to the HTTPS dashboard URL.
+- Terminate TLS at a reverse proxy and set `PUBLIC_FRONTEND_ORIGIN` to the HTTPS dashboard URL; add `https://tauri.localhost` when desktop delivery is enabled.
 - Keep PostgreSQL and encryption keys in managed secret storage.
 - Install required Tesseract language packs before setting `OCR_LANGUAGES`, for example `tur+eng`.
 - Scrape `/metrics`, define alerts for health failures and rate-limit rejections, and aggregate container logs.

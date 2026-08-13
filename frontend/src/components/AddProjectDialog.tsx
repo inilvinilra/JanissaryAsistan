@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useState } from 'react';
 
 import { getCompetitions, uploadProject, type CategoryTemplate, type Competition, type Project } from '@/lib/api';
+import { chooseDesktopProjectFile, isDesktopApp } from '@/lib/desktop';
 import { useLocale } from '@/lib/locale-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -72,6 +73,11 @@ export function AddProjectDialog({
     }
   }
 
+  async function chooseFile() {
+    const selected = await chooseDesktopProjectFile();
+    if (selected) setFile(selected);
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -115,13 +121,8 @@ export function AddProjectDialog({
 
           <div className="space-y-2">
             <Label htmlFor="project-file">{t('fieldFile')}</Label>
-            <Input
-              id="project-file"
-              type="file"
-              accept=".pdf,.txt,.md,.markdown"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              required
-            />
+            {isDesktopApp() ? <Button type="button" variant="outline" className="w-full justify-start" onClick={() => void chooseFile()}>{file ? file.name : t('fieldFile')}</Button> : <Input id="project-file" type="file" accept=".pdf,.txt,.md,.markdown,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />}
+            {isDesktopApp() && !file && <p className="text-xs text-muted-foreground">{t('chooseFileError')}</p>}
           </div>
 
           {error && <p className="text-destructive text-sm">{error}</p>}

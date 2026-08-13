@@ -27,6 +27,7 @@ Tasks provided by the product owner will be added here verbatim and tracked sepa
 
 | ID | Finding | Status | Verification target |
 | --- | --- | --- | --- |
+| AI-UX-01 | Integrate Emirhan branch AI analysis, similarity/source analysis, AI Copilot, and the Tauri delivery shell into the current enterprise dashboard without duplicating authorization or backend logic. | Verified | AI workspace, Copilot, source analysis, Tauri integration, and regression tests |
 | SEC-01 | Route-level authentication exists, but role permissions are not enforced per endpoint. A jury member can currently call administrative endpoints. | Verified | Role/API authorization integration tests |
 | DATA-01 | Projects have no mandatory `competition_id` or `team_id`. Competition-scoped data separation cannot be guaranteed. | Verified | Database migration and cross-competition access tests |
 | SEC-02 | Competition and category scope enforcement covers direct competition routes plus project, team, submission, demo-day, and appeal resources. | Verified | Tenant and category isolation test matrix |
@@ -134,6 +135,7 @@ Tasks provided by the product owner will be added here verbatim and tracked sepa
 | 2026-08-12 | TEST-01 | Added a consolidated automated and live verification report. | `TEST-EXECUTION-REPORT.md` records all completed evidence and remaining human ownership. |
 | 2026-08-13 | OPS-01, TEST-01 | Fixed the development CORS mismatch that prevented a dashboard opened at `localhost:4321` from reaching an API that allowed only `127.0.0.1:4321`. Development now permits both local origins; production fails fast unless an explicit `PUBLIC_FRONTEND_ORIGIN` is configured. | Backend tests: 24/24 passed; live health and login preflight responses returned the expected `Access-Control-Allow-Origin: http://localhost:4321`; administrator login returned `200`. |
 | 2026-08-13 | OPS-01, TEST-01 | Added a same-origin `/api` development proxy so browser sessions no longer call the local backend directly. This removes browser-specific loopback/CORS interference while production continues to use its explicitly configured API origin. | `http://localhost:4321/api/health` returned `200`; system Chromium dashboard workflows passed 2/2 through the proxy. |
+| 2026-08-13 | AI-UX-01 | Added the explainable AI workspace, version-aware source/similarity research, evidence-grounded project Copilot, overview readiness indicators, source-term insight cards, and the Tauri desktop delivery integration. Native file selection and protected-file save remain authorization-bound and use the existing backend contract. | Backend tests: 27/27 passed; frontend tests: 4/4 passed; production build passed; Chromium browser workflows: 2/2 passed; Tauri Rust `cargo check` passed. |
 
 ## Next Execution Order
 

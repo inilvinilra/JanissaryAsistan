@@ -10,6 +10,8 @@ const BASELINE_MIGRATION_VERSION: i64 = 1;
 const BASELINE_MIGRATION_NAME: &str = "baseline_schema";
 const PERFORMANCE_INDEX_MIGRATION_VERSION: i64 = 2;
 const PERFORMANCE_INDEX_MIGRATION_NAME: &str = "operational_indexes";
+const AI_ANALYSIS_MIGRATION_VERSION: i64 = 3;
+const AI_ANALYSIS_MIGRATION_NAME: &str = "ai_analysis_workspace";
 
 pub struct Database {
     pub pool: PgPool,
@@ -64,7 +66,7 @@ impl Database {
             sqlx::query_scalar("SELECT MAX(version) FROM schema_migrations")
                 .fetch_one(&self.pool)
                 .await?;
-        if applied_version.is_some_and(|version| version > PERFORMANCE_INDEX_MIGRATION_VERSION) {
+        if applied_version.is_some_and(|version| version > AI_ANALYSIS_MIGRATION_VERSION) {
             anyhow::bail!("Database schema version is newer than this application supports");
         }
         let applied_version = applied_version.unwrap_or_default();
@@ -80,6 +82,11 @@ impl Database {
                 PERFORMANCE_INDEX_MIGRATION_NAME,
             )
             .await?;
+        }
+        if applied_version < AI_ANALYSIS_MIGRATION_VERSION {
+            self.apply_ai_analysis_workspace().await?;
+            self.record_migration(AI_ANALYSIS_MIGRATION_VERSION, AI_ANALYSIS_MIGRATION_NAME)
+                .await?;
         }
         Ok(())
     }
@@ -107,6 +114,23 @@ impl Database {
         ] {
             sqlx::query(statement).execute(&self.pool).await?;
         }
+        Ok(())
+    }
+
+    async fn apply_ai_analysis_workspace(&self) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS project_research_analyses (
+                project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                source_file_version INTEGER,
+                originality_score DOUBLE PRECISION NOT NULL,
+                originality_label TEXT NOT NULL,
+                query_terms JSONB NOT NULL DEFAULT '[]'::jsonb,
+                sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+                analyzed_at TIMESTAMPTZ DEFAULT NOW()
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -367,7 +391,6 @@ impl Database {
         .await?;
         sqlx::query("ALTER TABLE ai_evaluations ADD COLUMN IF NOT EXISTS similar_projects JSONB NOT NULL DEFAULT '[]'::jsonb")
             .execute(&self.pool).await?;
-
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS jury_scores (
                 id SERIAL PRIMARY KEY,
@@ -4187,6 +4210,59 @@ impl Database {
         row.map(|value| ai_evaluation_from_row(&value)).transpose()
     }
 
+    pub async fn latest_project_file_version(&self, project_id: i32) -> Result<Option<i32>> {
+        sqlx::query_scalar("SELECT MAX(version) FROM project_files WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn get_project_research(
+        &self,
+        project_id: i32,
+    ) -> Result<Option<crate::models::ProjectResearchAnalysis>> {
+        let row = sqlx::query(
+            "SELECT project_id, source_file_version, originality_score, originality_label,
+                    query_terms, sources, analyzed_at
+             FROM project_research_analyses WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|value| project_research_from_row(&value))
+            .transpose()
+    }
+
+    pub async fn upsert_project_research(
+        &self,
+        analysis: &crate::models::ProjectResearchAnalysis,
+    ) -> Result<crate::models::ProjectResearchAnalysis> {
+        let row = sqlx::query(
+            "INSERT INTO project_research_analyses
+             (project_id, source_file_version, originality_score, originality_label, query_terms, sources)
+             VALUES ($1,$2,$3,$4,$5,$6)
+             ON CONFLICT (project_id) DO UPDATE SET
+               source_file_version = EXCLUDED.source_file_version,
+               originality_score = EXCLUDED.originality_score,
+               originality_label = EXCLUDED.originality_label,
+               query_terms = EXCLUDED.query_terms,
+               sources = EXCLUDED.sources,
+               analyzed_at = NOW()
+             RETURNING project_id, source_file_version, originality_score, originality_label,
+                       query_terms, sources, analyzed_at",
+        )
+        .bind(analysis.project_id)
+        .bind(analysis.source_file_version)
+        .bind(analysis.originality_score)
+        .bind(&analysis.originality_label)
+        .bind(serde_json::to_value(&analysis.query_terms)?)
+        .bind(serde_json::to_value(&analysis.sources)?)
+        .fetch_one(&self.pool)
+        .await?;
+        project_research_from_row(&row)
+    }
+
     pub async fn add_jury_score(
         &self,
         project_id: i32,
@@ -4922,6 +4998,17 @@ fn ai_evaluation_from_row(row: &PgRow) -> Result<crate::models::AiEvaluation> {
         sources: json_array(row, "sources")?,
         similar_projects: json_array(row, "similar_projects")?,
         evaluated_at: timestamp_text(row, "evaluated_at"),
+    })
+}
+fn project_research_from_row(row: &PgRow) -> Result<crate::models::ProjectResearchAnalysis> {
+    Ok(crate::models::ProjectResearchAnalysis {
+        project_id: row.get("project_id"),
+        source_file_version: row.get("source_file_version"),
+        originality_score: row.get("originality_score"),
+        originality_label: row.get("originality_label"),
+        query_terms: json_array(row, "query_terms")?,
+        sources: json_array(row, "sources")?,
+        analyzed_at: timestamp_text(row, "analyzed_at"),
     })
 }
 fn jury_score_from_row(row: &PgRow) -> Result<crate::models::JuryScore> {

@@ -125,12 +125,25 @@ async fn main() {
         tokio::spawn(email_delivery_worker(state.clone()));
     }
     let cors = match std::env::var("PUBLIC_FRONTEND_ORIGIN") {
-        Ok(origin) => CorsLayer::new()
-            .allow_origin(origin.parse::<HeaderValue>().expect("PUBLIC_FRONTEND_ORIGIN must be a valid origin")),
-        Err(_) if production_mode => panic!("PUBLIC_FRONTEND_ORIGIN must be configured in production"),
+        Ok(origins) => CorsLayer::new().allow_origin(
+            origins
+                .split(',')
+                .map(|origin| {
+                    origin
+                        .trim()
+                        .parse::<HeaderValue>()
+                        .expect("PUBLIC_FRONTEND_ORIGIN must contain valid comma-separated origins")
+                })
+                .collect::<Vec<_>>(),
+        ),
+        Err(_) if production_mode => {
+            panic!("PUBLIC_FRONTEND_ORIGIN must be configured in production")
+        }
         Err(_) => CorsLayer::new().allow_origin([
             HeaderValue::from_static("http://127.0.0.1:4321"),
             HeaderValue::from_static("http://localhost:4321"),
+            HeaderValue::from_static("https://tauri.localhost"),
+            HeaderValue::from_static("http://tauri.localhost"),
         ]),
     };
 
@@ -170,6 +183,14 @@ async fn main() {
         .route("/projects/{id}/files/{file_id}", get(download_project_file))
         .route("/projects/{id}/document", get(get_project_document))
         .route("/projects/{id}/file", get(get_project_file))
+        .route(
+            "/projects/{id}/research",
+            get(get_project_research).post(run_project_research),
+        )
+        .route(
+            "/projects/{id}/copilot",
+            axum::routing::post(ask_project_copilot),
+        )
         .route("/categories", get(list_categories))
         .route(
             "/categories/{category}/kpis",
@@ -267,9 +288,7 @@ async fn main() {
         .route("/activity", get(list_activity))
         .route("/test/parse", get(test_parse))
         .route("/test/search", get(test_search))
-        .layer(
-            cors.allow_methods(Any).allow_headers(Any),
-        )
+        .layer(cors.allow_methods(Any).allow_headers(Any))
         .layer(middleware::from_fn_with_state(state.clone(), rate_limit))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -644,7 +663,8 @@ fn role_allows_request(user: &AuthenticatedUser, method: &Method, path: &str) ->
                     || path.ends_with("/files")
                     || path.ends_with("/appeals")
                     || path.ends_with("/jury-assignments")
-                    || path.ends_with("/ai-evaluation"));
+                    || path.ends_with("/ai-evaluation")
+                    || path.ends_with("/research"));
             }
             return path == "/projects";
         }
@@ -673,7 +693,8 @@ fn observer_can_read_path(path: &str) -> bool {
                 || path.ends_with("/appeals")
                 || path.ends_with("/jury-assignments")
                 || path.ends_with("/jury-scores")
-                || path.ends_with("/ai-evaluation")))
+                || path.ends_with("/ai-evaluation")
+                || path.ends_with("/research")))
 }
 
 async fn resource_competition_id(state: &AppState, path: &str) -> Result<Option<i32>, StatusCode> {
@@ -3388,6 +3409,355 @@ async fn get_project_document(
         .ok_or(StatusCode::NOT_FOUND)
 }
 
+async fn get_project_research(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::ProjectResearchAnalysis>, StatusCode> {
+    state
+        .db
+        .get_project_research(id)
+        .await
+        .map_err(|error| {
+            eprintln!("Research analysis fetch error: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+async fn run_project_research(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(input): Json<models::ResearchRequest>,
+) -> Result<Json<models::ProjectResearchAnalysis>, (StatusCode, String)> {
+    let source_file_version = state
+        .db
+        .latest_project_file_version(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if !input.refresh
+        && let Some(existing) = state
+            .db
+            .get_project_research(id)
+            .await
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        && existing.source_file_version == source_file_version
+    {
+        return Ok(Json(existing));
+    }
+
+    let document = state
+        .db
+        .get_project_document(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            "No parsed document is available for research".to_string(),
+        ))?;
+    let external_sources = match std::env::var("BRAVE_API_KEY") {
+        Ok(api_key) if !api_key.trim().is_empty() => {
+            research::search_related_sources(&document.keywords, &api_key)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, project_id = id, "related-source search failed");
+                    Vec::new()
+                })
+        }
+        _ => Vec::new(),
+    };
+    let analysis = build_project_research(id, source_file_version, &document, &external_sources);
+    let saved = state
+        .db
+        .upsert_project_research(&analysis)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    state
+        .db
+        .record_audit(
+            "project_research_refreshed",
+            &actor.email,
+            "project",
+            Some(id),
+            serde_json::json!({
+                "source_file_version": source_file_version,
+                "query_term_count": saved.query_terms.len(),
+                "source_count": saved.sources.len(),
+            }),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(saved))
+}
+
+async fn ask_project_copilot(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(input): Json<models::CopilotRequest>,
+) -> Result<Json<models::CopilotResponse>, (StatusCode, String)> {
+    let question = input.question.trim();
+    if !(3..=1_000).contains(&question.chars().count()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Question must contain between 3 and 1000 characters".to_string(),
+        ));
+    }
+    let project = state
+        .db
+        .get_project(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
+    let document = state
+        .db
+        .get_project_document(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let evaluation = state
+        .db
+        .get_ai_evaluation(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let research = state
+        .db
+        .get_project_research(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let response = build_copilot_response(
+        question,
+        &project,
+        document.as_ref(),
+        evaluation.as_ref(),
+        research.as_ref(),
+    );
+    state
+        .db
+        .record_audit(
+            "project_copilot_queried",
+            &actor.email,
+            "project",
+            Some(id),
+            serde_json::json!({ "question_length": question.chars().count(), "mode": response.mode }),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(response))
+}
+
+fn build_project_research(
+    project_id: i32,
+    source_file_version: Option<i32>,
+    document: &models::Document,
+    external_sources: &[models::SearchResult],
+) -> models::ProjectResearchAnalysis {
+    let query_terms = document
+        .keywords
+        .iter()
+        .take(8)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut sources = document
+        .references
+        .iter()
+        .take(10)
+        .map(|reference| models::ResearchSource {
+            title: reference.clone(),
+            url: reference.starts_with("http").then(|| reference.clone()),
+            source_type: "project_reference".to_string(),
+            snippet: "Reference listed in the submitted project document.".to_string(),
+            matched_terms: Vec::new(),
+            similarity: 0.0,
+            explanation: "The reference should be reviewed for relevance and attribution."
+                .to_string(),
+        })
+        .collect::<Vec<_>>();
+    sources.extend(external_sources.iter().map(|source| {
+        let source_text = format!("{} {}", source.title, source.snippet).to_lowercase();
+        let matched_terms = query_terms
+            .iter()
+            .filter(|term| source_text.contains(&term.to_lowercase()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let similarity = if query_terms.is_empty() {
+            0.0
+        } else {
+            matched_terms.len() as f64 / query_terms.len() as f64
+        };
+        models::ResearchSource {
+            title: source.title.clone(),
+            url: Some(source.url.clone()),
+            source_type: source.source_type.clone(),
+            snippet: source.snippet.clone(),
+            matched_terms: matched_terms.clone(),
+            similarity,
+            explanation: if matched_terms.is_empty() {
+                "No direct keyword overlap was found in the indexed source summary.".to_string()
+            } else {
+                format!("Shared analysis terms: {}.", matched_terms.join(", "))
+            },
+        }
+    }));
+    let highest_similarity = sources
+        .iter()
+        .map(|source| source.similarity)
+        .fold(0.0_f64, f64::max);
+    let originality_score = if external_sources.is_empty() {
+        0.0
+    } else {
+        (100.0 - highest_similarity * 100.0).clamp(0.0, 100.0)
+    };
+    let originality_label = if external_sources.is_empty() {
+        "Insufficient external evidence".to_string()
+    } else if originality_score >= 80.0 {
+        "Low indexed overlap".to_string()
+    } else if originality_score >= 55.0 {
+        "Moderate indexed overlap".to_string()
+    } else {
+        "High indexed overlap — jury review recommended".to_string()
+    };
+    models::ProjectResearchAnalysis {
+        project_id,
+        source_file_version,
+        originality_score,
+        originality_label,
+        query_terms,
+        sources,
+        analyzed_at: chrono::Utc::now().to_rfc3339(),
+    }
+}
+
+fn build_copilot_response(
+    question: &str,
+    project: &models::Project,
+    document: Option<&models::Document>,
+    evaluation: Option<&models::AiEvaluation>,
+    research: Option<&models::ProjectResearchAnalysis>,
+) -> models::CopilotResponse {
+    let normalized = question.to_lowercase();
+    let mut citations = Vec::new();
+    let answer = if normalized.contains("weak")
+        || normalized.contains("risk")
+        || normalized.contains("zayıf")
+        || normalized.contains("risk")
+    {
+        let findings = evaluation
+            .map(|item| {
+                item.weaknesses
+                    .iter()
+                    .chain(item.risks.iter())
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if findings.is_empty() {
+            "The stored evaluation does not contain a confirmed weakness or risk. Review the KPI evidence and document completeness before making a decision.".to_string()
+        } else {
+            format!("The main review points are: {}.", findings.join(" "))
+        }
+    } else if normalized.contains("strong") || normalized.contains("güçlü") {
+        let findings = evaluation
+            .map(|item| item.strengths.iter().take(5).cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        if findings.is_empty() {
+            "The stored evaluation has no confirmed strength statements yet.".to_string()
+        } else {
+            format!("The strongest recorded points are: {}.", findings.join(" "))
+        }
+    } else if normalized.contains("missing") || normalized.contains("eksik") {
+        let findings = evaluation
+            .map(|item| {
+                item.missing_information
+                    .iter()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if findings.is_empty() {
+            "No missing-information item is stored. The jury should still confirm evidence for each KPI.".to_string()
+        } else {
+            format!(
+                "The evaluation asks for the following missing information: {}.",
+                findings.join(" ")
+            )
+        }
+    } else if normalized.contains("similar")
+        || normalized.contains("source")
+        || normalized.contains("benzer")
+        || normalized.contains("kaynak")
+    {
+        let source_summary = research
+            .map(|item| {
+                format!(
+                    "{} source records are available. {}",
+                    item.sources.len(),
+                    item.originality_label
+                )
+            })
+            .unwrap_or_else(|| "No source analysis has been run yet.".to_string());
+        format!(
+            "{} Similarity findings are advisory and require jury confirmation; they are not plagiarism determinations.",
+            source_summary
+        )
+    } else if let Some(evaluation) = evaluation {
+        format!(
+            "The current AI evaluation is {:.1}/100 with {:.0}% confidence across {} KPI items. The project is in '{:?}' status. Ask about strengths, risks, missing information, KPI evidence, or source overlap for a focused answer.",
+            evaluation.total_score,
+            evaluation.confidence * 100.0,
+            evaluation.kpi_scores.len(),
+            project.status
+        )
+    } else {
+        let document_summary = document
+            .map(|item| {
+                format!(
+                    "The parsed submission contains {} words and {} extracted keywords.",
+                    item.word_count,
+                    item.keywords.len()
+                )
+            })
+            .unwrap_or_else(|| "No parsed submission document is available.".to_string());
+        format!(
+            "{} An AI evaluation has not been stored yet, so conclusions should remain provisional.",
+            document_summary
+        )
+    };
+    if let Some(evaluation) = evaluation {
+        citations.extend(
+            evaluation
+                .kpi_scores
+                .iter()
+                .flat_map(|kpi| kpi.evidence.iter())
+                .take(5)
+                .cloned(),
+        );
+    }
+    if let Some(research) = research {
+        citations.extend(
+            research
+                .sources
+                .iter()
+                .filter_map(|source| source.url.clone())
+                .take(3),
+        );
+    }
+    citations.sort();
+    citations.dedup();
+    models::CopilotResponse {
+        answer,
+        mode: "evidence-grounded-summary".to_string(),
+        citations,
+        suggested_questions: vec![
+            "What are the strongest KPI findings?".to_string(),
+            "Which risks require jury verification?".to_string(),
+            "What information is missing from this submission?".to_string(),
+        ],
+    }
+}
+
 async fn list_activity(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
@@ -3706,5 +4076,88 @@ mod tests {
             parse_file_encryption_key(Some(&encoded)).expect("valid key should parse"),
             Some([7_u8; 32])
         );
+    }
+
+    #[test]
+    fn research_analysis_marks_missing_external_evidence_as_advisory() {
+        let document = models::Document {
+            filename: "proposal.md".into(),
+            file_type: models::FileType::Markdown,
+            raw_text: "Project text".into(),
+            word_count: 2,
+            headings: vec![],
+            keywords: vec!["robotics".into(), "vision".into()],
+            references: vec!["https://example.org/reference".into()],
+            has_references: true,
+            has_abstract: false,
+            has_conclusion: false,
+            has_methodology: false,
+            language: models::Language::English,
+            sections: vec![],
+        };
+        let analysis = build_project_research(7, Some(2), &document, &[]);
+
+        assert_eq!(analysis.project_id, 7);
+        assert_eq!(analysis.source_file_version, Some(2));
+        assert_eq!(analysis.originality_score, 0.0);
+        assert_eq!(analysis.originality_label, "Insufficient external evidence");
+        assert_eq!(analysis.sources.len(), 1);
+    }
+
+    #[test]
+    fn research_analysis_calculates_keyword_overlap_for_external_sources() {
+        let document = models::Document {
+            filename: "proposal.md".into(),
+            file_type: models::FileType::Markdown,
+            raw_text: "Project text".into(),
+            word_count: 2,
+            headings: vec![],
+            keywords: vec!["robotics".into(), "vision".into()],
+            references: vec![],
+            has_references: false,
+            has_abstract: false,
+            has_conclusion: false,
+            has_methodology: false,
+            language: models::Language::English,
+            sections: vec![],
+        };
+        let source = models::SearchResult {
+            title: "Robotics vision paper".into(),
+            url: "https://arxiv.org/abs/1234".into(),
+            snippet: "Computer vision for robotics".into(),
+            source_type: "academic".into(),
+            fetched_content: None,
+            http_status: 200,
+        };
+        let analysis = build_project_research(7, None, &document, &[source]);
+
+        assert_eq!(analysis.sources.len(), 1);
+        assert_eq!(
+            analysis.sources[0].matched_terms,
+            vec!["robotics", "vision"]
+        );
+        assert_eq!(analysis.sources[0].similarity, 1.0);
+        assert_eq!(analysis.originality_score, 0.0);
+    }
+
+    #[test]
+    fn jury_members_cannot_access_ai_research_or_copilot() {
+        let jury_member = AuthenticatedUser {
+            id: 7,
+            email: "jury@example.org".into(),
+            role: "jury_member".into(),
+            competition_id: Some(1),
+            category: Some("software".into()),
+        };
+        assert!(!role_allows_request(
+            &jury_member,
+            &Method::GET,
+            "/projects/3/research"
+        ));
+        assert!(!role_allows_request(
+            &jury_member,
+            &Method::POST,
+            "/projects/3/copilot"
+        ));
     }
 }
