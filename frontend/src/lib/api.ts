@@ -290,6 +290,27 @@ export async function getProjectSimilarityAnalysis(projectId: number): Promise<P
 export function runProjectSimilarityAnalysis(projectId: number): Promise<ProjectSimilarityAnalysis> { return jsonRequest(`${API_URL}/projects/${projectId}/similarity`, { method: 'POST' }); }
 /** Runs MVP gate 06: scores the report against the competition's criteria and produces applicant feedback. */
 export function runCriterionEvaluation(projectId: number): Promise<AiEvaluation> { return jsonRequest(`${API_URL}/projects/${projectId}/ai-evaluation/run`, { method: 'POST' }); }
+
+export interface PendingAssessment {
+  project_id: number;
+  project_reference: string;
+  category: string;
+  missing: string[];
+}
+export interface AssessmentProgress {
+  competition_id: number;
+  total_projects: number;
+  parsed_reports: number;
+  category_fit_completed: number;
+  similarity_completed: number;
+  criterion_evaluation_completed: number;
+  flagged_for_review: number;
+  completion_percent: number;
+  pending_projects: PendingAssessment[];
+}
+export function getAssessmentProgress(competitionId: number): Promise<AssessmentProgress> { return jsonRequest(`${API_URL}/competitions/${competitionId}/assessment-progress`); }
+/** Queues every project still missing an analysis; returns at once and reports progress separately. */
+export function runCompetitionAssessments(competitionId: number): Promise<AssessmentProgress> { return jsonRequest(`${API_URL}/competitions/${competitionId}/assessment-run`, { method: 'POST' }); }
 export function getProjectAssessmentReadiness(projectId: number): Promise<ProjectAssessmentReadiness> { return jsonRequest(`${API_URL}/projects/${projectId}/assessment-readiness`); }
 export function getReportTemplate(competitionId: number): Promise<ReportTemplate> { return jsonRequest(`${API_URL}/competitions/${competitionId}/report-template`); }
 export function saveReportTemplate(competitionId: number, input: { name: string; expected_language: string; min_words: number; max_words: number; sections: TemplateSection[] }): Promise<ReportTemplate> {

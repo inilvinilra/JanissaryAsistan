@@ -20,9 +20,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useLocale } from '@/lib/locale-context';
+import { AssessmentProgressPanel } from '@/components/AssessmentProgressPanel';
 
 export function CompetitionOperationsPanel() {
   const { t } = useLocale();
+  const canRunAssessments = ['system_admin', 'competition_manager', 'chief_judge', 'evaluation_manager'].includes(
+    typeof localStorage === 'undefined'
+      ? ''
+      : (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').role ?? ''; } catch { return ''; } })(),
+  );
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [stages, setStages] = useState<CompetitionStage[]>([]);
@@ -158,6 +164,7 @@ export function CompetitionOperationsPanel() {
                   </div>
                 </div>
               )}
+              <AssessmentProgressPanel competitionId={selectedId!} canRun={canRunAssessments} />
               <div className="rounded-lg border p-3"><p className="mb-2 text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('finalMinutesAndLock')}</p><textarea className="min-h-16 w-full rounded-md border bg-background p-2 text-xs" value={finalMinutes} onChange={(event) => setFinalMinutes(event.target.value)} placeholder={t('finalMinutesPlaceholder')} /><div className="mt-2 flex gap-2"><Input className="h-8 text-xs" value={finalSigner} onChange={(event) => setFinalSigner(event.target.value)} placeholder={t('authorizedSigner')} /><Button size="sm" disabled={!finalMinutes.trim() || !finalSigner.trim()} onClick={async () => { try { await finalizeCompetition(selectedId!, { minutes: finalMinutes, signed_by: finalSigner }); setFinalMinutes(''); setFinalSigner(''); setError(null); } catch (error) { setError((error as Error).message); } }}>{t('lockResults')}</Button></div></div>
               </>
             )}
