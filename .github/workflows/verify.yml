@@ -3,7 +3,7 @@ name: Verify
 on:
   pull_request:
   push:
-    branches: [main, mehmet-branch]
+    branches: [main,]
 
 jobs:
   backend:
@@ -31,6 +31,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build
       - run: npm audit --omit=dev --audit-level=high

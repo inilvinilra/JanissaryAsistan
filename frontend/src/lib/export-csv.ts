@@ -1,15 +1,25 @@
 import type { Project } from '@/lib/api';
 
+/**
+ * Project and KPI names are entered by applicants and administrators, so a
+ * value starting with a formula prefix would be executed by Excel and Sheets
+ * when the export is opened. Prefixing with an apostrophe forces text.
+ */
+function neutralizeFormula(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
 function escapeCsv(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replace(/"/g, '""')}"`;
+  const safe = neutralizeFormula(value);
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return value;
+  return safe;
 }
 
 export function exportProjectsCsv(projects: Project[], category: string) {
   const kpiNames = [...new Set(projects.flatMap((p) => p.kpi_scores.map((k) => k.name)))];
-  const header = ['rank', 'name', 'ai_score', ...kpiNames];
+  const header = ['rank', 'name', 'ai_score', ...kpiNames.map(escapeCsv)];
   const rows = projects.map((p, i) => {
     const scoreByKpi = new Map(p.kpi_scores.map((k) => [k.name, k.score]));
     return [

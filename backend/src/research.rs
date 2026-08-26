@@ -46,7 +46,11 @@ pub async fn search_related_sources(
         }
     }
 
-    all_results.dedup_by(|a, b| a.url == b.url);
+    // `dedup_by` only removes *adjacent* duplicates. Results arrive grouped by
+    // keyword, so the same URL returned for two different keywords is never
+    // adjacent and would survive. Keep first occurrence, drop later repeats.
+    let mut seen_urls = std::collections::HashSet::new();
+    all_results.retain(|result| seen_urls.insert(result.url.clone()));
 
     let mut fetched_results = Vec::new();
     for mut result in all_results.into_iter().take(10) {
@@ -134,7 +138,9 @@ async fn fetch_content(client: &Client, url: &str) -> Result<(u16, String)> {
         200 => {
             let text = response.text().await?;
             let clean = clean_html(&text);
-            Ok((200, clean[..clean.len().min(2000)].to_string()))
+            // Truncate by characters, not bytes: a byte slice can land inside a
+            // multi-byte character and panic on non-ASCII source pages.
+            Ok((200, clean.chars().take(2000).collect()))
         }
         429 => {
             tokio::time::sleep(Duration::from_secs(3)).await;

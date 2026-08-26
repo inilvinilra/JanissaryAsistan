@@ -83,8 +83,8 @@ async fn propagate_matches(
     matches: &[ProjectSimilarityMatch],
 ) -> Result<()> {
     for entry in matches {
-        let Some(mut other) = assessment_store::get_similarity(&database.pool, entry.project_id)
-            .await?
+        let Some(mut other) =
+            assessment_store::get_similarity(&database.pool, entry.project_id).await?
         else {
             continue;
         };

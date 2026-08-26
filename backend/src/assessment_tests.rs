@@ -154,7 +154,10 @@ fn a_turkish_cybersecurity_report_is_matched_to_cybersecurity() {
         result.current_category_score > 0.0,
         "kendi kategorisi sıfır puan aldı"
     );
-    assert!(!result.requires_review, "doğru kategori incelemeye düşmemeli");
+    assert!(
+        !result.requires_review,
+        "doğru kategori incelemeye düşmemeli"
+    );
 }
 
 #[test]
@@ -190,7 +193,6 @@ fn inflected_turkish_forms_still_match_their_keyword() {
     let result = analyze_category_fit(&inflected, "sustainability", &all_templates()).unwrap();
     assert_eq!(result.recommended_category, "sustainability");
 }
-
 
 /// A short report copied verbatim into a much longer document, padded with
 /// unrelated filler, must still be caught — the containment coefficient stays
@@ -284,9 +286,11 @@ fn shared_template_section_titles_do_not_count_as_similarity() {
 
     let result = analyze_project_similarity(&left, &right);
     assert!(
-        !result.matched_terms.iter().any(|term| term == "ozet" || term == "sonuc"),
+        !result
+            .matched_terms
+            .iter()
+            .any(|term| term == "ozet" || term == "sonuc"),
         "başlık kelimeleri eşleşen terimlerde görünmemeli: {:?}",
         result.matched_terms
     );
 }
-

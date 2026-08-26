@@ -1,8 +1,8 @@
 mod assessment;
-mod category_taxonomy;
 mod assessment_service;
 mod assessment_store;
 mod auth_policy;
+mod category_taxonomy;
 mod database;
 mod language;
 mod models;
@@ -82,7 +82,7 @@ struct AuthenticatedUser {
 
 #[tokio::main]
 async fn main() {
-    dotenvy::dotenv().ok();
+    load_dotenv();
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(
@@ -177,7 +177,7 @@ async fn main() {
         .route("/auth/2fa/setup", axum::routing::post(setup_two_factor))
         .route("/auth/2fa/confirm", axum::routing::post(confirm_two_factor))
         .route("/my-feedback", get(get_my_feedback))
-        .route("/projects", get(list_projects).post(create_project))
+        .route("/projects", get(list_projects))
         .route("/projects/upload", axum::routing::post(upload_project))
         .route("/projects/{id}", get(get_project).patch(update_project))
         .route("/projects/{id}/blind", get(get_blind_project))
@@ -343,6 +343,23 @@ async fn main() {
     )
     .await
     .unwrap();
+}
+
+/// A missing `.env` is normal — production supplies configuration through the
+/// process environment. A malformed one is not: the parser stops at the first
+/// bad line, so every variable below it is silently dropped. That failure mode
+/// hides security-relevant settings such as `FILE_ENCRYPTION_KEY` and
+/// `REQUIRE_TWO_FACTOR`, so it must abort startup instead of being swallowed.
+fn load_dotenv() {
+    match dotenvy::dotenv() {
+        Ok(_) => {}
+        Err(error) if error.not_found() => {}
+        Err(error) => panic!(
+            "backend/.env could not be parsed: {error}. Values containing spaces or characters \
+             such as '!' must be quoted, for example BOOTSTRAP_ADMIN_NAME=\"Initial Administrator\". \
+             Every variable after the offending line would otherwise be ignored."
+        ),
+    }
 }
 
 fn sample_data_enabled(production_mode: bool, configured: Option<&str>) -> bool {
@@ -2750,7 +2767,7 @@ async fn list_projects(
         (Some(x), Some(y)) => x.cmp(&y),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => b.ai_score.partial_cmp(&a.ai_score).unwrap(),
+        (None, None) => b.ai_score.total_cmp(&a.ai_score),
     });
 
     if actor.role == "jury_member" {
@@ -2758,44 +2775,6 @@ async fn list_projects(
     }
 
     Ok(Json(projects))
-}
-
-#[derive(Deserialize)]
-struct CreateProjectRequest {
-    competition_id: i32,
-    team_id: Option<i32>,
-    name: String,
-    category: String,
-    file_path: String,
-}
-
-async fn create_project(
-    Extension(actor): Extension<AuthenticatedUser>,
-    State(state): State<AppState>,
-    Json(req): Json<CreateProjectRequest>,
-) -> Result<Json<Project>, (StatusCode, String)> {
-    validate_project_scope(
-        &state,
-        &actor,
-        req.competition_id,
-        req.team_id,
-        &req.category,
-    )
-    .await?;
-    let document = parser::parse_file(&req.file_path)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Parse error: {e}")))?;
-
-    score_and_store(
-        &state,
-        &actor.email,
-        req.competition_id,
-        req.team_id,
-        &req.name,
-        &req.category,
-        document,
-        Some(&req.file_path),
-    )
-    .await
 }
 
 async fn upload_project(
@@ -4528,5 +4507,3 @@ async fn test_search(
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
-
-

@@ -202,8 +202,7 @@ pub fn analyze_project_similarity(left: &Document, right: &Document) -> ProjectS
     // coefficient (shared terms over the *smaller* document's own vocabulary)
     // stays high in exactly that case, so a submission cannot dodge detection
     // by burying a copied section under bulk unrelated content.
-    let containment =
-        matched_terms.len() as f64 / left_terms.len().min(right_terms.len()) as f64;
+    let containment = matched_terms.len() as f64 / left_terms.len().min(right_terms.len()) as f64;
     ProjectSimilarityResult {
         similarity: jaccard.max(containment),
         matched_terms,

@@ -217,7 +217,10 @@ fn extract_headings(text: &str) -> Vec<String> {
         }
     }
 
-    headings.dedup();
+    // Order-preserving global dedup: `Vec::dedup` only collapses adjacent
+    // repeats, so a heading recurring later in the document survived.
+    let mut seen = std::collections::HashSet::new();
+    headings.retain(|heading| seen.insert(heading.clone()));
     headings
 }
 
@@ -264,7 +267,10 @@ fn extract_references(text: &str) -> Vec<String> {
         refs.push(br.as_str().to_string());
     }
 
-    refs.dedup();
+    // DOIs, URLs and bracket citations are collected in three separate passes,
+    // so duplicates are never adjacent and `Vec::dedup` removed nothing.
+    let mut seen = std::collections::HashSet::new();
+    refs.retain(|reference| seen.insert(reference.clone()));
     refs.into_iter().take(50).collect()
 }
 

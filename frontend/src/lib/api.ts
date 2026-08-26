@@ -317,7 +317,8 @@ export interface CompetitionReport {
   demo_day_slots: number;
 }
 
-export type UserRole = 'system_admin' | 'competition_manager' | 'chief_judge' | 'evaluation_manager' | 'jury_member' | 'observer' | 'read_only';
+/** Mirrors `USER_ROLES` in backend/src/main.rs — keep both lists in step. */
+export type UserRole = 'system_admin' | 'competition_manager' | 'chief_judge' | 'evaluation_manager' | 'jury_member' | 'contestant' | 'observer' | 'read_only';
 export interface RoleDefinition { role: UserRole; permissions: string[]; }
 export interface User {
   id: number;
@@ -490,9 +491,10 @@ export interface CompetitionCategory {
   kpi_category: string | null;
 }
 
+/** `status` is assigned by the backend ('planned'); it is not part of the request. */
 export function createCompetitionStage(
   competitionId: number,
-  input: Omit<CompetitionStage, 'id' | 'competition_id'>,
+  input: Omit<CompetitionStage, 'id' | 'competition_id' | 'status'>,
 ): Promise<CompetitionStage> {
   return jsonRequest(`${API_URL}/competitions/${competitionId}/stages`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),

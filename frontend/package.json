@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
+    "typecheck": "astro check",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "preview": "astro preview",
@@ -46,6 +47,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@types/node": "^26.3.0",
     "vitest": "^4.1.10"
   }
 }

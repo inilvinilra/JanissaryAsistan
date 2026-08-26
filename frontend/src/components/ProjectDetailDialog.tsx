@@ -61,7 +61,7 @@ const STATUS_KEYS: Record<ProjectStatus, string> = {
 };
 
 export function ProjectDetailDialog({
-  project,
+  project: projectProp,
   open,
   onOpenChange,
   onProjectUpdated,
@@ -112,13 +112,13 @@ export function ProjectDetailDialog({
   const [versionComparison, setVersionComparison] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || !project) return;
+    if (!open || !projectProp) return;
     setDocument(undefined);
     setAiEvaluation(undefined);
-    setNotes(project.notes);
-    setReviewCompleted(project.review_completed);
-    setTagText(project.tags.join(', '));
-    Promise.all([getProjectDocument(project.id).catch(() => null), canViewAiAnalysis ? getAiEvaluation(project.id).catch(() => null) : Promise.resolve(null), currentRole === 'jury_member' ? getJuryAiSummary(project.id).catch(() => null) : Promise.resolve(null), getJuryScores(project.id).catch(() => []), getJuryAssignments(project.id).catch(() => []), getProjectMetadata(project.id).catch(() => null), getProjectFiles(project.id).catch(() => []), getCompetitions().catch(() => []), getAppeals(project.id).catch(() => []), getEligibilityReport(project.id).catch(() => null), getTemplateCompliance(project.id).catch(() => null), getProjectAssessmentReadiness(project.id).catch(() => null)])
+    setNotes(projectProp.notes);
+    setReviewCompleted(projectProp.review_completed);
+    setTagText(projectProp.tags.join(', '));
+    Promise.all([getProjectDocument(projectProp.id).catch(() => null), canViewAiAnalysis ? getAiEvaluation(projectProp.id).catch(() => null) : Promise.resolve(null), currentRole === 'jury_member' ? getJuryAiSummary(projectProp.id).catch(() => null) : Promise.resolve(null), getJuryScores(projectProp.id).catch(() => []), getJuryAssignments(projectProp.id).catch(() => []), getProjectMetadata(projectProp.id).catch(() => null), getProjectFiles(projectProp.id).catch(() => []), getCompetitions().catch(() => []), getAppeals(projectProp.id).catch(() => []), getEligibilityReport(projectProp.id).catch(() => null), getTemplateCompliance(projectProp.id).catch(() => null), getProjectAssessmentReadiness(projectProp.id).catch(() => null)])
       .then(async ([nextDocument, nextAiEvaluation, nextJuryAiSummary, nextJuryScores, nextJuryAssignments, nextMetadata, nextFiles, competitions, nextAppeals, nextEligibility, nextTemplateCompliance, nextAssessmentReadiness]) => {
         setDocument(nextDocument);
         setAiEvaluation(nextAiEvaluation);
@@ -139,14 +139,17 @@ export function ProjectDetailDialog({
         setDocument(null);
         setAiEvaluation(null);
       });
-  }, [open, project, canViewAiAnalysis]);
+  }, [open, projectProp, canViewAiAnalysis]);
 
   async function refreshAssessmentReadiness() {
-    if (!project) return;
-    setAssessmentReadiness(await getProjectAssessmentReadiness(project.id));
+    if (!projectProp) return;
+    setAssessmentReadiness(await getProjectAssessmentReadiness(projectProp.id));
   }
 
-  if (!project) return null;
+  if (!projectProp) return null;
+  // Bound to a const so the non-null narrowing survives into the callbacks
+  // below; a narrowed parameter loses it at every closure boundary.
+  const project = projectProp;
 
   async function saveNotes() {
     setSavingNotes(true);
@@ -162,7 +165,7 @@ export function ProjectDetailDialog({
   }
 
   async function changeStatus(status: ProjectStatus) {
-    const updated = await updateProject(project!.id, { status });
+    const updated = await updateProject(project.id, { status });
     onProjectUpdated(updated);
   }
 

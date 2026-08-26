@@ -1,5 +1,5 @@
 use crate::models::{
-    Document, Language, ReportTemplate, SectionFinding, TemplateCompliance, TemplateSection,
+    Document, ReportTemplate, SectionFinding, TemplateCompliance, TemplateSection,
 };
 
 const MATCH_THRESHOLD: f64 = 0.6;

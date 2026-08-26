@@ -1,5 +1,5 @@
 use super::*;
-use crate::models::{FileType, Section};
+use crate::models::{FileType, Language, Section};
 
 fn document(sections: Vec<(&str, usize)>, language: Language, words: usize) -> Document {
     Document {
@@ -220,7 +220,10 @@ fn only_present_sections_are_reported_as_satisfied() {
             .unwrap()
     };
     assert!(by_key("abstract").is_satisfied());
-    assert!(!by_key("conclusion").is_satisfied(), "kısa bölüm sayılmamalı");
+    assert!(
+        !by_key("conclusion").is_satisfied(),
+        "kısa bölüm sayılmamalı"
+    );
     assert!(!by_key("method").is_satisfied(), "eksik bölüm sayılmamalı");
 
     let unsatisfied = result

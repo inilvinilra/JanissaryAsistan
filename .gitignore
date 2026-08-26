@@ -1,21 +1,30 @@
-*.md
-*.txt
-
-# Dashboard workspace artifacts
+# Build output and dependencies
+node_modules/
 frontend/node_modules/
 frontend/.astro/
 frontend/dist/
-frontend/.env
-backend/target/
-backend/uploads/
-backend/.env
 frontend/test-results/
 frontend/playwright-report/
+kys-app/node_modules/
+kys-app/dist/
+backend/target/
+kys-engine/target/
+kys-app/src-tauri/target/
 
-!CRITICAL-IMPROVEMENTS.md
-!DEPLOYMENT.md
-!SYSTEM-TEST-PLAN.md
-!TEST-EXECUTION-REPORT.md
-!EMIRHAN-BRANCH-INTEGRATION-PLAN.md
+# Secrets and local state
+.env
+*/.env
+frontend/.env
+backend/.env
+backend/uploads/
+.localdb/
+
+# Local competition material that must never be published
 Dw3QCCHFT4bwtZd7WZkH5tk3ogF6dA4f.pdf
 Jüri-Asistani-Proje-Sablonu.pdf
+
+# Credential files — never commit. Keep these outside the repository.
+Apis.md
+Apikeys.md
+*.key
+*credentials*

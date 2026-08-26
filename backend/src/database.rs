@@ -4613,14 +4613,14 @@ impl Database {
             .map(|row| {
                 // The category-fit analysis is optional — a manager may not have
                 // run it yet — so its columns come back NULL via the LEFT JOIN.
-                let category_fit = row
-                    .get::<Option<String>, _>("recommended_category")
-                    .map(|recommended_category| crate::models::CategoryFitSummary {
+                let category_fit = row.get::<Option<String>, _>("recommended_category").map(
+                    |recommended_category| crate::models::CategoryFitSummary {
                         current_category_score: row.get("current_category_score"),
                         recommended_category,
                         recommended_category_score: row.get("recommended_category_score"),
                         requires_review: row.get("category_requires_review"),
-                    });
+                    },
+                );
                 Ok(crate::models::ContestantFeedback {
                     project_id: row.get("id"),
                     project_name: row.get("name"),

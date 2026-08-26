@@ -13,7 +13,16 @@ import { getCurrentUser, logout, type AuthSession } from '@/lib/api';
 export function App() {
   const [resetToken, setResetToken] = useState(() => typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('reset_token'));
   const [hydrated, setHydrated] = useState(false);
-  const [session, setSession] = useState<AuthSession | null>(() => { if (typeof localStorage === 'undefined') return null; const token = localStorage.getItem('jury-auth-token'); const user = localStorage.getItem('jury-auth-user'); return token && user ? { token, expires_at: '', user: JSON.parse(user) } : null; });
+  // A corrupted cached user must not throw during render — that would leave a
+  // blank screen the user cannot recover from without clearing site data.
+  const [session, setSession] = useState<AuthSession | null>(() => {
+    if (typeof localStorage === 'undefined') return null;
+    const token = localStorage.getItem('jury-auth-token');
+    const user = localStorage.getItem('jury-auth-user');
+    if (!token || !user) return null;
+    try { return { token, expires_at: '', user: JSON.parse(user) }; }
+    catch { localStorage.removeItem('jury-auth-user'); localStorage.removeItem('jury-auth-token'); return null; }
+  });
   async function signOut() {
     const token = localStorage.getItem('jury-auth-token');
     if (token) await logout(token);
