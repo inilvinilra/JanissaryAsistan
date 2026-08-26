@@ -147,6 +147,55 @@ fn best_match<'a>(
     best
 }
 
+/// Whether a section's body actually discusses what its heading promises.
+///
+/// The structural checks above only ask whether a required heading exists and
+/// whether enough words follow it. That passes a report whose "Yöntem" heading
+/// is followed by budget tables or filler — which is exactly what padding to a
+/// word count produces, and exactly what the brief's heading-and-content check
+/// is meant to catch.
+///
+/// The section's own vocabulary comes from the template: its title and the
+/// aliases the organisers wrote for it, widened through
+/// [`crate::criterion_vocabulary`] so an English template still recognises a
+/// Turkish report. A section is judged off-topic only when it is long enough to
+/// be judged at all and contains none of that vocabulary — a single hit is
+/// enough to give the applicant the benefit of the doubt.
+fn discusses_its_topic(requirement: &TemplateSection, content: &str) -> bool {
+    let vocabulary: Vec<String> = std::iter::once(requirement.title.clone())
+        .chain(requirement.aliases.iter().cloned())
+        .flat_map(|phrase| {
+            crate::category_taxonomy::fold_ascii(&phrase)
+                .split(|character: char| !character.is_alphanumeric())
+                .filter(|token| token.chars().count() >= 4)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .flat_map(|token| crate::criterion_vocabulary::expand(&token))
+        .collect();
+    if vocabulary.is_empty() {
+        return true;
+    }
+    let folded = crate::category_taxonomy::fold_ascii(content);
+    vocabulary.iter().any(|term| folded.contains(term.as_str()))
+}
+
+/// Sections shorter than this are already reported as "thin"; judging their
+/// subject on a sentence or two would be guesswork.
+const MIN_WORDS_TO_JUDGE_TOPIC: i64 = 40;
+
+/// The parsed body under a matched heading. Headings recovered from the raw
+/// text carry no section of their own, so those yield nothing to judge and the
+/// caller leaves them alone.
+fn section_content(document: &Document, heading: &str) -> Option<String> {
+    document
+        .sections
+        .iter()
+        .find(|section| normalize_heading(&section.title) == normalize_heading(heading))
+        .map(|section| section.content.clone())
+        .filter(|content| !content.trim().is_empty())
+}
+
 pub fn evaluate(
     project_id: i32,
     template: &ReportTemplate,
@@ -173,6 +222,26 @@ pub fn evaluate(
     for requirement in &template.sections {
         let matched = best_match(requirement, &candidates);
         let (status, matched_heading, word_count, detail) = match matched {
+            // Long enough, but the body never mentions what the heading
+            // promises. Padding a report to a word count produces exactly this,
+            // and the structural checks alone would pass it.
+            Some((heading, words, _))
+                if words >= requirement.min_words
+                    && words >= MIN_WORDS_TO_JUDGE_TOPIC
+                    && matches!(
+                        section_content(document, heading),
+                        Some(ref content) if !discusses_its_topic(requirement, content)
+                    ) =>
+            {
+                (
+                    "off_topic",
+                    Some(heading.to_string()),
+                    words,
+                    format!(
+                        "\"{heading}\" başlığı bulundu ancak içeriği bu bölümün konusundan bahsetmiyor"
+                    ),
+                )
+            }
             Some((heading, words, _)) if words >= requirement.min_words => (
                 "present",
                 Some(heading.to_string()),
@@ -200,7 +269,10 @@ pub fn evaluate(
             required_total += 1.0;
             earned += match status {
                 "present" => 1.0,
-                "thin" => 0.5,
+                // A heading with the wrong content is worth no more than a
+                // heading with too little: the required material is absent
+                // either way.
+                "thin" | "off_topic" => 0.5,
                 _ => 0.0,
             };
         }
@@ -237,12 +309,18 @@ pub fn evaluate(
         .count();
     let thin_required = findings
         .iter()
-        .filter(|finding| finding.required && !finding.is_satisfied())
-        .count()
-        - missing_required;
+        .filter(|finding| finding.required && finding.status == "thin")
+        .count();
+    let off_topic_required = findings
+        .iter()
+        .filter(|finding| finding.required && finding.status == "off_topic")
+        .count();
 
-    let compliant =
-        missing_required == 0 && thin_required == 0 && language_matches && word_count_within_range;
+    let compliant = missing_required == 0
+        && thin_required == 0
+        && off_topic_required == 0
+        && language_matches
+        && word_count_within_range;
 
     let summary = if compliant {
         format!(
@@ -256,6 +334,11 @@ pub fn evaluate(
         }
         if thin_required > 0 {
             problems.push(format!("{thin_required} bölüm beklenen içerikten kısa"));
+        }
+        if off_topic_required > 0 {
+            problems.push(format!(
+                "{off_topic_required} bölümün içeriği başlığıyla örtüşmüyor"
+            ));
         }
         if !language_matches {
             problems.push(format!(

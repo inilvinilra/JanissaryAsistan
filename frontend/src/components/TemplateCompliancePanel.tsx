@@ -5,6 +5,7 @@ import type { SectionFinding, TemplateCompliance } from '@/lib/api';
 const STATUS_STYLES: Record<SectionFinding['status'], { icon: typeof CheckCircle2; tone: string; labelKey: string }> = {
   present: { icon: CheckCircle2, tone: 'text-primary', labelKey: 'templateSectionPresent' },
   thin: { icon: CircleAlert, tone: 'text-amber-600 dark:text-amber-500', labelKey: 'templateSectionThin' },
+  off_topic: { icon: CircleAlert, tone: 'text-amber-600 dark:text-amber-500', labelKey: 'templateSectionOffTopic' },
   missing: { icon: CircleX, tone: 'text-destructive', labelKey: 'templateSectionMissing' },
 };
 

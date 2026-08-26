@@ -222,7 +222,8 @@ export function getEligibilityReport(projectId: number): Promise<EligibilityRepo
 
 export interface TemplateSection { key: string; title: string; aliases: string[]; min_words: number; required: boolean; }
 export interface ReportTemplate { competition_id: number; name: string; version: number; expected_language: string; min_words: number; max_words: number; sections: TemplateSection[]; updated_at: string; updated_by: string; }
-export interface SectionFinding { key: string; title: string; required: boolean; status: 'present' | 'thin' | 'missing'; matched_heading: string | null; word_count: number; min_words: number; detail: string; }
+export interface SectionFinding { key: string; title: string; required: boolean; /** `off_topic`: long enough, but the body does not discuss what the heading promises. */
+  status: 'present' | 'thin' | 'missing' | 'off_topic'; matched_heading: string | null; word_count: number; min_words: number; detail: string; }
 export interface TemplateCompliance {
   project_id: number;
   template_name: string;

@@ -258,3 +258,85 @@ fn a_compliant_report_leaves_no_unsatisfied_required_section() {
         0
     );
 }
+
+/// The brief's heading-and-content check has two halves. The structural half —
+/// does the heading exist, is there enough after it — passed a report whose
+/// "Yöntem" section was padded with budget prose, because it only ever counted
+/// words. This is the other half.
+#[test]
+fn a_section_padded_with_unrelated_prose_is_reported_as_off_topic() {
+    let sections = vec![required("methodology", "Yöntem", vec!["Metodoloji"], 40)];
+    let mut doc = document(vec![("YÖNTEM", 60)], Language::turkish(), 1200);
+    doc.sections[0].content = "Proje bütçesi kalemler halinde planlanmış ve ilgili birim \
+         tarafından onaylanmıştır. Harcamalar dönemsel olarak raporlanmakta, ekip üyelerinin \
+         görev dağılımı haftalık toplantılarda güncellenmektedir. Paydaş iletişimi düzenli \
+         yürütülmüş, takvim üzerinde herhangi bir sapma yaşanmamıştır."
+        .into();
+
+    let result = evaluate(7, &template(sections), &doc);
+    assert_eq!(result.sections[0].status, "off_topic");
+    assert!(!result.compliant);
+    assert!(
+        result.summary.contains("başlığıyla örtüşmüyor"),
+        "unexpected summary: {}",
+        result.summary
+    );
+}
+
+#[test]
+fn a_section_that_discusses_its_topic_still_passes() {
+    let sections = vec![required("methodology", "Yöntem", vec!["Metodoloji"], 40)];
+    let mut doc = document(vec![("YÖNTEM", 60)], Language::turkish(), 1200);
+    doc.sections[0].content = "Uygulanan yöntem üç aşamadan oluşmaktadır. Veri toplama \
+         aşamasında iki tarlada altı ay boyunca ölçüm yapılmış, ardından aykırı değerler \
+         ayıklanmıştır. Model eğitimi için veri kümesi üç parçaya bölünmüş ve başarım \
+         ortalama mutlak hata ile raporlanmıştır."
+        .into();
+
+    let result = evaluate(7, &template(sections), &doc);
+    assert_eq!(result.sections[0].status, "present");
+    assert!(result.compliant, "{}", result.summary);
+}
+
+/// The topic check is bilingual. A section the organisers titled in English —
+/// matched to the Turkish heading through the alias the template provides —
+/// must still be recognised as on-topic when its body is Turkish, or every
+/// English-titled section of every Turkish report would be called off-topic.
+#[test]
+fn the_topic_check_recognises_turkish_content_under_an_english_title() {
+    let sections = vec![required("methodology", "Methodology", vec!["Yöntem"], 40)];
+    let mut doc = document(vec![("Yöntem", 60)], Language::turkish(), 1200);
+    doc.sections[0].content = "Uygulanan yöntem üç aşamadan oluşmaktadır ve doğrulama \
+         kümesinde başarım ölçülmüştür. Veri temizleme adımları betiklenerek yinelenebilir \
+         hale getirilmiştir."
+        .into();
+
+    let result = evaluate(7, &template(sections), &doc);
+    assert_eq!(
+        result.sections[0].status, "present",
+        "detail: {}",
+        result.sections[0].detail
+    );
+}
+
+/// A short section is already reported as thin; judging its subject on a
+/// sentence or two would be guesswork, so the topic check stays out of it.
+#[test]
+fn a_short_section_is_reported_as_thin_rather_than_off_topic() {
+    let sections = vec![required("methodology", "Yöntem", vec![], 100)];
+    let mut doc = document(vec![("YÖNTEM", 12)], Language::turkish(), 1200);
+    doc.sections[0].content = "Bütçe onaylandı.".into();
+    let result = evaluate(7, &template(sections), &doc);
+    assert_eq!(result.sections[0].status, "thin");
+}
+
+/// A heading recovered from raw text carries no parsed body, so there is
+/// nothing to judge and it must not be called off-topic.
+#[test]
+fn a_heading_without_a_parsed_body_is_never_called_off_topic() {
+    let sections = vec![required("methodology", "Yöntem", vec![], 0)];
+    let mut doc = document(vec![], Language::turkish(), 1200);
+    doc.headings = vec!["YÖNTEM".into()];
+    let result = evaluate(7, &template(sections), &doc);
+    assert_ne!(result.sections[0].status, "off_topic");
+}

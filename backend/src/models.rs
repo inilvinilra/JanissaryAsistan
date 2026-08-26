@@ -891,9 +891,10 @@ pub struct SectionFinding {
 }
 
 impl SectionFinding {
-    /// "present" is the only state that satisfies a required section; "thin"
+    /// "present" is the only state that satisfies a required section. "thin"
     /// means the heading exists but the section is shorter than the template
-    /// demands. Callers must go through this instead of comparing the string,
+    /// demands; "off_topic" means it is long enough but discusses something
+    /// else. Callers must go through this instead of comparing the string,
     /// which is how the readiness gate once tested for a status that is never
     /// produced.
     pub fn is_satisfied(&self) -> bool {

@@ -4,6 +4,7 @@ type Dict = Record<string, string>;
 
 const dictionaries: Record<Locale, Dict> = {
   tr: {
+    templateSectionOffTopic: 'Konu dışı',
     selectCompetitionFirst: 'Yüklemeden önce bir yarışma seçin.',
     bulkUploadHint: 'Birden fazla rapor seçebilirsiniz; her biri ayrı proje olarak eklenir.',
     bulkUploadSelected: '{count} rapor seçildi.',
@@ -408,6 +409,7 @@ const dictionaries: Record<Locale, Dict> = {
     lockResults: 'Sonuçları kilitle',
   },
   en: {
+    templateSectionOffTopic: 'Off topic',
     selectCompetitionFirst: 'Select a competition before uploading.',
     bulkUploadHint: 'You can select several reports; each is added as its own project.',
     bulkUploadSelected: '{count} report(s) selected.',
