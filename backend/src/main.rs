@@ -4,6 +4,9 @@ mod assessment_store;
 mod auth_policy;
 mod category_taxonomy;
 mod database;
+mod evaluation;
+mod evaluation_llm;
+mod evaluation_service;
 mod language;
 mod models;
 mod parser;
@@ -280,6 +283,10 @@ async fn main() {
         .route(
             "/projects/{id}/ai-evaluation",
             get(get_ai_evaluation).put(upsert_ai_evaluation),
+        )
+        .route(
+            "/projects/{id}/ai-evaluation/run",
+            axum::routing::post(run_ai_evaluation),
         )
         .route("/projects/{id}/jury-ai-summary", get(get_jury_ai_summary))
         .route(
@@ -3699,6 +3706,56 @@ async fn get_ai_evaluation(
         })?
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// Runs MVP gate 06 for one project: scores the report against the
+/// competition's criteria and produces the applicant feedback the portal shows.
+/// The evaluation is advisory — the brief reserves the decision for the judge.
+async fn run_ai_evaluation(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<AiEvaluation>, (StatusCode, String)> {
+    if !matches!(
+        actor.role.as_str(),
+        "system_admin" | "competition_manager" | "chief_judge" | "evaluation_manager"
+    ) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "This role cannot start a criterion evaluation".into(),
+        ));
+    }
+    let project = state
+        .db
+        .get_project(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
+    let evaluation = evaluation_service::run_criterion_evaluation(&state.db, &project)
+        .await
+        .map_err(|error| (StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?;
+    state
+        .db
+        .record_audit(
+            "project_criterion_evaluation_run",
+            &actor.email,
+            "project",
+            Some(id),
+            serde_json::json!({
+                "model_version": evaluation.model_version,
+                "total_score": evaluation.total_score,
+                "confidence": evaluation.confidence,
+                "criterion_count": evaluation.kpi_scores.len(),
+                "evidenced_criteria": evaluation
+                    .kpi_scores
+                    .iter()
+                    .filter(|score| !score.evidence.is_empty())
+                    .count(),
+            }),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(evaluation))
 }
 
 async fn get_jury_ai_summary(
