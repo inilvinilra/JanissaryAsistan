@@ -485,3 +485,48 @@ fn the_language_gate_fails_on_a_language_or_length_mismatch() {
     compliance.word_count_within_range = false;
     assert_eq!(language_template_gate(Some(&compliance)).0, "failed");
 }
+
+/// A juror must not be able to read the scores and notes their peers already
+/// filed: seeing them would anchor the judgement the blind review protects.
+/// Coordinating roles still receive the complete set.
+#[test]
+fn jurors_see_only_their_own_scores() {
+    fn score(id: i32, juror: &str) -> JuryScore {
+        JuryScore {
+            id,
+            project_id: 1,
+            stage_id: None,
+            juror_name: juror.into(),
+            total_score: 80.0,
+            kpi_scores: Vec::new(),
+            notes: "internal reasoning".into(),
+            submitted_at: String::new(),
+        }
+    }
+    let juror = AuthenticatedUser {
+        id: 7,
+        email: "jury@example.org".into(),
+        role: "jury_member".into(),
+        competition_id: Some(1),
+        category: Some("software".into()),
+    };
+    let scores = vec![
+        score(1, "jury@example.org"),
+        score(2, "other.juror@example.org"),
+        score(3, "third.juror@example.org"),
+    ];
+
+    let own = visible_jury_scores(&juror, scores.clone());
+    assert_eq!(own.len(), 1, "juror should only see their own submission");
+    assert_eq!(own[0].juror_name, "jury@example.org");
+
+    let coordinator = AuthenticatedUser {
+        role: "chief_judge".into(),
+        ..juror.clone()
+    };
+    assert_eq!(
+        visible_jury_scores(&coordinator, scores).len(),
+        3,
+        "coordinating roles need every score to compare jurors"
+    );
+}

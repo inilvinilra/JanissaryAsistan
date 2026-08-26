@@ -6,8 +6,25 @@ use crate::{
     models::{CategoryFitAnalysis, Project, ProjectSimilarityAnalysis, ProjectSimilarityMatch},
 };
 
-const SIMILARITY_REVIEW_THRESHOLD: f64 = 0.45;
+/// Shared vocabulary over combined vocabulary. Two independently written
+/// reports in the same language and subject area measure roughly 0.25–0.34 on
+/// this scale, while a near-duplicate measures 0.75 and above, so the two
+/// populations separate cleanly here.
+const JACCARD_REVIEW_THRESHOLD: f64 = 0.45;
+
+/// Shared vocabulary over the smaller report's own vocabulary. This is the
+/// measure that catches a copied section buried inside a padded document, where
+/// it approaches 1.0 while Jaccard collapses. Its baseline for unrelated
+/// reports sits near 0.55, so it needs a far higher bar than Jaccard: judging
+/// both against 0.45 marked every submission for review.
+const CONTAINMENT_REVIEW_THRESHOLD: f64 = 0.80;
+
 const MAX_SIMILARITY_MATCHES: usize = 10;
+
+/// A match earns human attention when either measure clears its own bar.
+fn needs_review(match_: &ProjectSimilarityMatch) -> bool {
+    match_.jaccard >= JACCARD_REVIEW_THRESHOLD || match_.containment >= CONTAINMENT_REVIEW_THRESHOLD
+}
 
 pub async fn run_category_fit(
     database: &Database,
@@ -44,15 +61,23 @@ pub async fn run_similarity(
     let comparable =
         assessment_store::comparable_projects(&database.pool, project.competition_id, project.id)
             .await?;
+    // Tokenised once here rather than inside every pairwise comparison; with a
+    // few hundred submissions the repeated tokenisation dominated the request.
+    let document_terms = assessment::similarity_tokens(&document);
     let mut matches = comparable
         .iter()
         .map(|other| {
-            let result = assessment::analyze_project_similarity(&document, &other.document);
+            let result = assessment::compare_similarity_tokens(
+                &document_terms,
+                &assessment::similarity_tokens(&other.document),
+            );
             ProjectSimilarityMatch {
                 project_id: other.id,
                 project_reference: format!("PRJ-{:06}", other.id),
                 category: other.category.clone(),
                 similarity: result.similarity,
+                jaccard: result.jaccard,
+                containment: result.containment,
                 matched_terms: result.matched_terms.into_iter().take(25).collect(),
             }
         })
@@ -64,7 +89,7 @@ pub async fn run_similarity(
         project_id: project.id,
         source_file_version: database.latest_project_file_version(project.id).await?,
         highest_similarity,
-        requires_review: highest_similarity >= SIMILARITY_REVIEW_THRESHOLD,
+        requires_review: matches.iter().any(needs_review),
         matches: matches.clone(),
         analyzed_at: String::new(),
     };
@@ -93,6 +118,8 @@ async fn propagate_matches(
             project_reference: format!("PRJ-{:06}", project.id),
             category: project.category.clone(),
             similarity: entry.similarity,
+            jaccard: entry.jaccard,
+            containment: entry.containment,
             matched_terms: entry.matched_terms.clone(),
         };
         other.matches.retain(|item| item.project_id != project.id);
@@ -106,7 +133,7 @@ async fn propagate_matches(
             .first()
             .map(|item| item.similarity)
             .unwrap_or(0.0);
-        other.requires_review = other.highest_similarity >= SIMILARITY_REVIEW_THRESHOLD;
+        other.requires_review = other.matches.iter().any(needs_review);
         assessment_store::save_similarity(&database.pool, &other).await?;
     }
     Ok(())

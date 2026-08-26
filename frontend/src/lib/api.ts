@@ -254,7 +254,12 @@ export interface ProjectSimilarityMatch {
   project_id: number;
   project_reference: string;
   category: string;
+  /** The stronger of the two measures below; shown as the headline figure. */
   similarity: number;
+  /** Shared vocabulary over combined vocabulary — genuine content overlap. */
+  jaccard: number;
+  /** Shared vocabulary over the smaller report's own — catches padded copies. */
+  containment: number;
   matched_terms: string[];
 }
 export interface ProjectSimilarityAnalysis {

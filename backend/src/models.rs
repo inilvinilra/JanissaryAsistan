@@ -926,7 +926,17 @@ pub struct ProjectSimilarityMatch {
     pub project_id: i32,
     pub project_reference: String,
     pub category: String,
+    /// Headline figure shown to the jury: the stronger of the two measures.
     pub similarity: f64,
+    /// Shared vocabulary over combined vocabulary. Separates genuine overlap
+    /// from two reports that merely share a language and a subject area.
+    #[serde(default)]
+    pub jaccard: f64,
+    /// Shared vocabulary over the *smaller* report's own vocabulary. Stays high
+    /// when a copied section is buried inside a much longer padded document,
+    /// which is exactly the case Jaccard dilutes away.
+    #[serde(default)]
+    pub containment: f64,
     pub matched_terms: Vec<String>,
 }
 

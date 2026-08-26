@@ -15,7 +15,10 @@ pub struct CategoryFitResult {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectSimilarityResult {
+    /// The stronger of the two measures, shown to the jury as the headline.
     pub similarity: f64,
+    pub jaccard: f64,
+    pub containment: f64,
     pub matched_terms: Vec<String>,
 }
 
@@ -154,14 +157,21 @@ fn stemmed_non_stopwords(text: &str) -> impl Iterator<Item = String> {
 /// ("özet", "sonuç", "kaynakça", "abstract", "conclusion", …). Every report
 /// that follows the template contains these as headings, so matching on them
 /// signals nothing about content overlap — it would make any two compliant
-/// reports look artificially similar. Derived from the template at call time
-/// instead of a hand-kept list, so the two can never drift apart.
-fn boilerplate_stems() -> BTreeSet<String> {
-    crate::template::default_sections()
-        .iter()
-        .flat_map(|section| std::iter::once(section.title.clone()).chain(section.aliases.clone()))
-        .flat_map(|phrase| stemmed_non_stopwords(&phrase).collect::<Vec<_>>())
-        .collect()
+/// reports look artificially similar. Derived from the template itself rather
+/// than a hand-kept list, so the two can never drift apart, and cached because
+/// a project is compared against every other submission in its competition —
+/// rebuilding this per comparison dominated the analysis.
+fn boilerplate_stems() -> &'static BTreeSet<String> {
+    static STEMS: std::sync::LazyLock<BTreeSet<String>> = std::sync::LazyLock::new(|| {
+        crate::template::default_sections()
+            .iter()
+            .flat_map(|section| {
+                std::iter::once(section.title.clone()).chain(section.aliases.clone())
+            })
+            .flat_map(|phrase| stemmed_non_stopwords(&phrase).collect::<Vec<_>>())
+            .collect()
+    });
+    &STEMS
 }
 
 /// Tokens meaningful for comparing two *different* projects' content. Unlike
@@ -170,31 +180,36 @@ fn boilerplate_stems() -> BTreeSet<String> {
 /// them: two unrelated reports in the same category otherwise share enough
 /// "için"/"the"/"ve" noise, or common template headings, to look deceptively
 /// similar before any real overlap is counted.
-fn similarity_tokens(document: &Document) -> BTreeSet<String> {
+pub fn similarity_tokens(document: &Document) -> BTreeSet<String> {
     let mut terms: BTreeSet<String> = stemmed_non_stopwords(&document.raw_text).collect();
     for keyword in &document.keywords {
         terms.extend(stemmed_non_stopwords(keyword));
     }
     for boilerplate in boilerplate_stems() {
-        terms.remove(&boilerplate);
+        terms.remove(boilerplate);
     }
     terms
 }
 
-pub fn analyze_project_similarity(left: &Document, right: &Document) -> ProjectSimilarityResult {
-    let left_terms = similarity_tokens(left);
-    let right_terms = similarity_tokens(right);
+/// Takes prepared token sets so a project analysed against every other
+/// submission tokenises its own report once instead of once per comparison.
+pub fn compare_similarity_tokens(
+    left_terms: &BTreeSet<String>,
+    right_terms: &BTreeSet<String>,
+) -> ProjectSimilarityResult {
     let matched_terms = left_terms
-        .intersection(&right_terms)
+        .intersection(right_terms)
         .cloned()
         .collect::<Vec<_>>();
     if matched_terms.is_empty() {
         return ProjectSimilarityResult {
             similarity: 0.0,
+            jaccard: 0.0,
+            containment: 0.0,
             matched_terms,
         };
     }
-    let union_size = left_terms.union(&right_terms).count();
+    let union_size = left_terms.union(right_terms).count();
     let jaccard = matched_terms.len() as f64 / union_size as f64;
     // Jaccard alone dilutes toward zero when one report is a short document
     // copied verbatim into a much longer one padded with unrelated filler —
@@ -202,9 +217,17 @@ pub fn analyze_project_similarity(left: &Document, right: &Document) -> ProjectS
     // coefficient (shared terms over the *smaller* document's own vocabulary)
     // stays high in exactly that case, so a submission cannot dodge detection
     // by burying a copied section under bulk unrelated content.
+    //
+    // The two are reported separately rather than only as a maximum: for
+    // similarly sized reports containment is just Jaccard scaled up by a
+    // constant, so judging both against one threshold flagged every report
+    // that merely shared a language and a subject area. Each measure carries
+    // its own threshold in `assessment_service`.
     let containment = matched_terms.len() as f64 / left_terms.len().min(right_terms.len()) as f64;
     ProjectSimilarityResult {
         similarity: jaccard.max(containment),
+        jaccard,
+        containment,
         matched_terms,
     }
 }

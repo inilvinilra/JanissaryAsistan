@@ -1,6 +1,12 @@
 use super::*;
 use crate::models::{FileType, KpiTemplate, Language};
 
+/// Convenience wrapper for the tests: production compares prepared token sets
+/// so each report is tokenised once across a whole competition.
+fn analyze_project_similarity(left: &Document, right: &Document) -> ProjectSimilarityResult {
+    compare_similarity_tokens(&similarity_tokens(left), &similarity_tokens(right))
+}
+
 fn document(text: &str, keywords: &[&str]) -> Document {
     Document {
         filename: "submission.pdf".into(),

@@ -714,6 +714,10 @@ fn role_allows_request(user: &AuthenticatedUser, method: &Method, path: &str) ->
                 return true;
             }
             if path.starts_with("/projects/") {
+                // `/jury-scores` stays readable, but `list_jury_scores` narrows
+                // the response to this juror's own submissions: seeing what
+                // peers already filed would anchor a juror before they score,
+                // defeating the blind review the rest of this policy protects.
                 return !(path.ends_with("/metadata")
                     || path.ends_with("/document")
                     || path.ends_with("/file")
@@ -3769,14 +3773,29 @@ async fn upsert_ai_evaluation(
     Ok(Json(evaluation))
 }
 
+/// A juror sees only their own submissions. Reading the scores and notes peers
+/// already filed would anchor their judgement before they enter their own, so
+/// the full set is reserved for the coordinating roles.
 async fn list_jury_scores(
+    Extension(actor): Extension<AuthenticatedUser>,
     State(state): State<AppState>,
     Path(id): Path<i32>,
 ) -> Result<Json<Vec<JuryScore>>, StatusCode> {
-    state.db.list_jury_scores(id).await.map(Json).map_err(|e| {
-        eprintln!("Jury scores error: {e}");
+    let scores = state.db.list_jury_scores(id).await.map_err(|error| {
+        tracing::error!(%error, project_id = id, "jury score lookup failed");
         StatusCode::INTERNAL_SERVER_ERROR
-    })
+    })?;
+    Ok(Json(visible_jury_scores(&actor, scores)))
+}
+
+fn visible_jury_scores(actor: &AuthenticatedUser, scores: Vec<JuryScore>) -> Vec<JuryScore> {
+    if actor.role != "jury_member" {
+        return scores;
+    }
+    scores
+        .into_iter()
+        .filter(|score| score.juror_name == actor.email)
+        .collect()
 }
 
 async fn add_jury_score(
