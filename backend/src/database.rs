@@ -5515,3 +5515,7 @@ fn build_projects_from_rows(rows: Vec<PgRow>) -> Vec<Project> {
 
     projects
 }
+
+#[cfg(test)]
+#[path = "database_tests.rs"]
+mod persistence_tests;

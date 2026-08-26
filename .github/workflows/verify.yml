@@ -11,6 +11,24 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # The persistence tests create and drop a database of their own per test, so
+    # they need a server they may administer rather than a prepared schema.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: jury
+          POSTGRES_PASSWORD: jury
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jury"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://jury:jury@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
