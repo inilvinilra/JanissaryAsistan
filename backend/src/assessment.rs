@@ -50,15 +50,25 @@ fn overlap_score(left: &BTreeSet<String>, right: &BTreeSet<String>) -> (f64, Vec
 
 /// Turkish is agglutinative, so an exact token match misses "sulamada" for the
 /// keyword "sulama". A keyword counts when any document token starts with it.
+///
+/// A short *part* of a multi-word keyword is not required to match, because the
+/// tokeniser drops fragments under three characters and "sensor agi" would
+/// otherwise never resolve. That exemption must not reach a single-word
+/// keyword: applied there it made "ag", "iot", "kod", "web" and "api" match
+/// unconditionally, so `software` and `technology` collected free score in
+/// every document and pulled correctly-filed cross-domain projects into review.
 fn keyword_matches(document_tokens: &BTreeSet<String>, keyword: &str) -> bool {
     let folded = category_taxonomy::fold_ascii(keyword);
     let parts = folded.split_whitespace().collect::<Vec<_>>();
-    parts.iter().all(|part| {
-        part.chars().count() < 4
-            || document_tokens
-                .iter()
-                .any(|token| token.starts_with(part) || part.starts_with(token.as_str()))
-    })
+    let multi_word = parts.len() > 1;
+    let present = |part: &&str| {
+        document_tokens
+            .iter()
+            .any(|token| token.starts_with(*part) || part.starts_with(token.as_str()))
+    };
+    parts
+        .iter()
+        .all(|part| (multi_word && part.chars().count() < 4) || present(part))
 }
 
 fn folded_tokens(document: &Document) -> BTreeSet<String> {

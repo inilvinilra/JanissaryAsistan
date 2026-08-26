@@ -395,28 +395,36 @@ pub const VOCABULARIES: &[CategoryVocabulary] = &[
             "solar",
         ],
     },
+    // "teknoloji", "sistem", "cihaz" and "ag" — and their English counterparts —
+    // were removed on purpose. Every engineering report in every category uses
+    // them, so they carried no signal about the subject while still adding
+    // score: this category matched roughly a fifth of its vocabulary against
+    // reports on medicine, education and data analysis alike, which made it a
+    // background attractor that pulled correctly-filed projects into review.
+    // What remains is vocabulary that distinguishes a connected-device project
+    // from a project that merely runs on a computer.
     CategoryVocabulary {
         category: "technology",
         keywords: &[
-            "teknoloji",
-            "sistem",
-            "cihaz",
             "donanim",
             "devre",
-            "iletisim",
-            "ag",
+            "gomulu",
+            "mikrodenetleyici",
+            "iletisim protokolu",
             "protokol",
             "nesnelerin interneti",
             "sensor agi",
             "haberlesme",
-            "technology",
-            "system",
-            "device",
+            "kablosuz",
+            "telemetri",
             "hardware",
             "circuit",
-            "communication",
-            "network",
+            "embedded",
+            "microcontroller",
+            "firmware",
             "protocol",
+            "wireless",
+            "gateway",
             "iot",
             "telemetry",
         ],

@@ -300,3 +300,53 @@ fn shared_template_section_titles_do_not_count_as_similarity() {
         result.matched_terms
     );
 }
+
+/// The short-part exemption exists so a multi-word keyword such as "sensor agi"
+/// can resolve when the tokeniser drops its short fragment. Applied to a
+/// single-word keyword it made "ag", "iot", "kod", "web" and "api" match every
+/// document, handing `software` and `technology` free score in every
+/// competition and pulling correctly-filed projects into review.
+#[test]
+fn a_short_single_word_keyword_does_not_match_an_unrelated_report() {
+    let document = document(
+        "Bu calisma hasta teshis surecinde klinik goruntuleme verilerini kullanan bir tibbi \
+         karar destek sistemi sunmaktadir. Tedavi planlamasi hekim onayiyla yurutulmektedir.",
+        &[],
+    );
+    let tokens = folded_tokens(&document);
+    for keyword in ["ag", "iot", "kod", "web", "api"] {
+        assert!(
+            !keyword_matches(&tokens, keyword),
+            "\"{keyword}\" must not match a report that never mentions it"
+        );
+    }
+}
+
+/// The exemption still has to work where it was needed.
+#[test]
+fn a_multi_word_keyword_still_resolves_through_its_short_fragment() {
+    let document = document(
+        "Tarlaya yerlestirilen sensor agindan toplanan veriler merkezi toplayiciya \
+         gonderilmektedir.",
+        &[],
+    );
+    assert!(keyword_matches(&folded_tokens(&document), "sensor agi"));
+}
+
+/// A single-word keyword the report does use must still count, so the fix does
+/// not simply disable short keywords.
+#[test]
+fn a_short_single_word_keyword_still_matches_when_present() {
+    let document = document(
+        "Gelistirilen web uygulamasi acik bir api uzerinden veri sunmaktadir ve kod tabani \
+         acik lisansla paylasilmaktadir.",
+        &[],
+    );
+    let tokens = folded_tokens(&document);
+    for keyword in ["kod", "web", "api"] {
+        assert!(
+            keyword_matches(&tokens, keyword),
+            "\"{keyword}\" is in the report and must match"
+        );
+    }
+}
