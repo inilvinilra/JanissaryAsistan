@@ -27,11 +27,38 @@ pub enum FileType {
     Image,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Language {
-    Turkish,
-    English,
-    Unknown,
+/// Serialised as a bare string ("Turkish", "German", "Unknown"), so documents
+/// stored before multi-language detection still deserialise unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Language(String);
+
+impl Language {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn unknown() -> Self {
+        Self("Unknown".into())
+    }
+
+    pub fn turkish() -> Self {
+        Self("Turkish".into())
+    }
+
+    pub fn english() -> Self {
+        Self("English".into())
+    }
+
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Language {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,6 +412,19 @@ pub struct AiEvaluation {
     pub evaluated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct JuryAiSummary {
+    pub project_id: i32,
+    pub total_score: f64,
+    pub confidence: f64,
+    pub kpi_scores: Vec<AiKpiEvaluation>,
+    pub strengths: Vec<String>,
+    pub weaknesses: Vec<String>,
+    pub missing_information: Vec<String>,
+    pub risks: Vec<String>,
+    pub evaluated_at: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpsertAiEvaluation {
     pub model_version: String,
@@ -494,6 +534,7 @@ pub struct User {
     pub two_factor_required: bool,
     pub competition_id: Option<i32>,
     pub category: Option<String>,
+    pub team_id: Option<i32>,
     pub created_at: String,
 }
 
@@ -504,6 +545,7 @@ pub struct CreateUser {
     pub role: String,
     pub competition_id: Option<i32>,
     pub category: Option<String>,
+    pub team_id: Option<i32>,
     pub password: Option<String>,
 }
 
@@ -513,7 +555,34 @@ pub struct UpdateUser {
     pub active: Option<bool>,
     pub competition_id: Option<i32>,
     pub category: Option<String>,
+    pub team_id: Option<i32>,
     pub password: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContestantFeedback {
+    pub project_id: i32,
+    pub project_name: String,
+    pub category: String,
+    pub status: ProjectStatus,
+    pub total_score: f64,
+    pub strengths: Vec<String>,
+    pub weaknesses: Vec<String>,
+    pub missing_information: Vec<String>,
+    pub risks: Vec<String>,
+    pub evaluated_at: String,
+    /// `None` until a manager runs the category-fit analysis for this project.
+    pub category_fit: Option<CategoryFitSummary>,
+}
+
+/// A contestant-safe view of `CategoryFitAnalysis`: no matched terms or file
+/// version, since those are internal review evidence, not applicant-facing.
+#[derive(Debug, Clone, Serialize)]
+pub struct CategoryFitSummary {
+    pub current_category_score: f64,
+    pub recommended_category: String,
+    pub recommended_category_score: f64,
+    pub requires_review: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -763,4 +832,126 @@ pub struct CompetitionCategory {
     pub name: String,
     pub slug: String,
     pub kpi_category: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateSection {
+    pub key: String,
+    pub title: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub min_words: i64,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportTemplate {
+    pub competition_id: i32,
+    pub name: String,
+    pub version: i32,
+    pub expected_language: String,
+    pub min_words: i64,
+    pub max_words: i64,
+    pub sections: Vec<TemplateSection>,
+    pub updated_at: String,
+    pub updated_by: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertReportTemplate {
+    pub name: String,
+    pub expected_language: String,
+    pub min_words: i64,
+    pub max_words: i64,
+    pub sections: Vec<TemplateSection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SectionFinding {
+    pub key: String,
+    pub title: String,
+    pub required: bool,
+    pub status: String,
+    pub matched_heading: Option<String>,
+    pub word_count: i64,
+    pub min_words: i64,
+    pub detail: String,
+}
+
+impl SectionFinding {
+    /// "present" is the only state that satisfies a required section; "thin"
+    /// means the heading exists but the section is shorter than the template
+    /// demands. Callers must go through this instead of comparing the string,
+    /// which is how the readiness gate once tested for a status that is never
+    /// produced.
+    pub fn is_satisfied(&self) -> bool {
+        self.status == "present"
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateCompliance {
+    pub project_id: i32,
+    pub template_name: String,
+    pub template_version: i32,
+    pub compliant: bool,
+    pub section_score: f64,
+    pub sections: Vec<SectionFinding>,
+    pub language_expected: String,
+    pub language_detected: String,
+    pub language_matches: bool,
+    pub word_count: i64,
+    pub min_words: i64,
+    pub max_words: i64,
+    pub word_count_within_range: bool,
+    pub summary: String,
+    pub evaluated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryFitAnalysis {
+    pub project_id: i32,
+    pub source_file_version: Option<i32>,
+    pub current_category_score: f64,
+    pub recommended_category: String,
+    pub recommended_category_score: f64,
+    pub matched_terms: Vec<String>,
+    pub requires_review: bool,
+    pub analyzed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectSimilarityMatch {
+    pub project_id: i32,
+    pub project_reference: String,
+    pub category: String,
+    pub similarity: f64,
+    pub matched_terms: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectSimilarityAnalysis {
+    pub project_id: i32,
+    pub source_file_version: Option<i32>,
+    pub highest_similarity: f64,
+    pub requires_review: bool,
+    pub matches: Vec<ProjectSimilarityMatch>,
+    pub analyzed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssessmentGate {
+    pub key: String,
+    pub label: String,
+    pub status: String,
+    pub detail: String,
+    pub requires_human_review: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectAssessmentReadiness {
+    pub project_id: i32,
+    pub ready_for_evaluation: bool,
+    pub checks: Vec<AssessmentGate>,
 }

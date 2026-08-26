@@ -27,6 +27,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ReportTemplateEditor } from '@/components/ReportTemplateEditor';
 
 export function CompetitionManager() {
   const { t } = useLocale();
@@ -355,6 +356,8 @@ export function CompetitionManager() {
                 </div>}
               </CardContent>
             </Card>
+
+            <ReportTemplateEditor competitionId={selected.id} />
 
             <Card>
               <CardHeader>

@@ -1,8 +1,15 @@
+mod assessment;
+mod category_taxonomy;
+mod assessment_service;
+mod assessment_store;
+mod auth_policy;
 mod database;
+mod language;
 mod models;
 mod parser;
 mod research;
 mod scoring;
+mod template;
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -107,6 +114,13 @@ async fn main() {
         db.seed_sample_data()
             .await
             .expect("Failed to seed sample data");
+        let competition_id = db
+            .default_competition_id()
+            .await
+            .expect("Failed to resolve the default competition");
+        db.seed_default_report_template(competition_id)
+            .await
+            .expect("Failed to seed the default report template");
     }
 
     let (update_events, _) = broadcast::channel(256);
@@ -162,11 +176,32 @@ async fn main() {
         )
         .route("/auth/2fa/setup", axum::routing::post(setup_two_factor))
         .route("/auth/2fa/confirm", axum::routing::post(confirm_two_factor))
+        .route("/my-feedback", get(get_my_feedback))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/upload", axum::routing::post(upload_project))
         .route("/projects/{id}", get(get_project).patch(update_project))
         .route("/projects/{id}/blind", get(get_blind_project))
         .route("/projects/{id}/eligibility", get(get_eligibility_report))
+        .route(
+            "/projects/{id}/template-compliance",
+            get(get_template_compliance),
+        )
+        .route(
+            "/projects/{id}/category-fit",
+            get(get_category_fit_analysis).post(run_category_fit_analysis),
+        )
+        .route(
+            "/projects/{id}/similarity",
+            get(get_project_similarity_analysis).post(run_project_similarity_analysis),
+        )
+        .route(
+            "/projects/{id}/assessment-readiness",
+            get(get_project_assessment_readiness),
+        )
+        .route(
+            "/competitions/{id}/report-template",
+            get(get_report_template).put(update_report_template),
+        )
         .route(
             "/projects/{id}/appeals",
             get(list_appeals).post(create_appeal),
@@ -192,6 +227,7 @@ async fn main() {
             axum::routing::post(ask_project_copilot),
         )
         .route("/categories", get(list_categories))
+        .route("/languages", get(list_languages))
         .route(
             "/categories/{category}/kpis",
             axum::routing::put(update_kpi_template),
@@ -245,6 +281,7 @@ async fn main() {
             "/projects/{id}/ai-evaluation",
             get(get_ai_evaluation).put(upsert_ai_evaluation),
         )
+        .route("/projects/{id}/jury-ai-summary", get(get_jury_ai_summary))
         .route(
             "/projects/{id}/jury-scores",
             get(list_jury_scores).post(add_jury_score),
@@ -350,20 +387,6 @@ async fn bootstrap_initial_admin(
         }
     }
     Ok(())
-}
-
-fn two_factor_is_required(role: &str) -> bool {
-    let production_mode =
-        std::env::var("APP_ENV").is_ok_and(|value| value.eq_ignore_ascii_case("production"));
-    let policy_enabled = two_factor_policy_enabled(
-        production_mode,
-        std::env::var("REQUIRE_TWO_FACTOR").ok().as_deref(),
-    );
-    policy_enabled
-        && matches!(
-            role,
-            "system_admin" | "competition_manager" | "chief_judge" | "jury_member"
-        )
 }
 
 fn two_factor_policy_enabled(production_mode: bool, configured: Option<&str>) -> bool {
@@ -507,7 +530,7 @@ async fn require_authenticated_request(
         Err((status, message)) => return (status, message).into_response(),
     };
     let user = match sqlx::query(
-        "SELECT email, role, competition_id, category, must_change_password, two_factor_enabled FROM users WHERE id=$1 AND active=TRUE",
+        "SELECT email, role, competition_id, category, must_change_password, two_factor_enabled, two_factor_exempt FROM users WHERE id=$1 AND active=TRUE",
     )
     .bind(user_id)
     .fetch_optional(&state.db.pool)
@@ -531,7 +554,15 @@ async fn require_authenticated_request(
         )
             .into_response();
     }
-    if two_factor_is_required(&current_user.role) && !user.get::<bool, _>("two_factor_enabled") {
+    if auth_policy::requires_two_factor_enrollment(
+        &current_user.role,
+        two_factor_policy_enabled(
+            std::env::var("APP_ENV").is_ok_and(|value| value.eq_ignore_ascii_case("production")),
+            std::env::var("REQUIRE_TWO_FACTOR").ok().as_deref(),
+        ),
+        user.get("two_factor_exempt"),
+    ) && !user.get::<bool, _>("two_factor_enabled")
+    {
         return (
             StatusCode::FORBIDDEN,
             "Two-factor enrollment is required before accessing the dashboard",
@@ -638,10 +669,20 @@ fn role_allows_request(user: &AuthenticatedUser, method: &Method, path: &str) ->
     if matches!(user.role.as_str(), "observer" | "read_only") {
         return read_request && observer_can_read_path(path);
     }
+    if user.role == "contestant" {
+        return read_request && path == "/my-feedback";
+    }
     if user.role == "competition_manager" {
         return !path.starts_with("/audit")
             && !path.starts_with("/roles")
             && !path.starts_with("/users");
+    }
+    if user.role == "evaluation_manager" {
+        return !path.starts_with("/users")
+            && !path.starts_with("/roles")
+            && !path.starts_with("/audit")
+            && !path.starts_with("/email-campaigns")
+            && !path.starts_with("/notifications");
     }
     if user.role == "chief_judge" {
         return !path.starts_with("/users")
@@ -797,7 +838,7 @@ async fn login(
     State(state): State<AppState>,
     Json(input): Json<LoginRequest>,
 ) -> Result<Json<AuthSession>, (StatusCode, String)> {
-    let row = sqlx::query("SELECT id, full_name, email, role, active, must_change_password, competition_id, category, created_at, password_hash, two_factor_enabled, two_factor_secret FROM users WHERE email = $1")
+    let row = sqlx::query("SELECT id, full_name, email, role, active, must_change_password, competition_id, category, team_id, created_at, password_hash, two_factor_enabled, two_factor_exempt, two_factor_secret FROM users WHERE email = $1")
         .bind(input.email.trim().to_lowercase()).fetch_optional(&state.db.pool).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::UNAUTHORIZED, "Invalid credentials".into()))?;
     let hash: Option<String> = row.get("password_hash");
@@ -862,9 +903,18 @@ async fn login(
             active: row.get("active"),
             must_change_password: row.get("must_change_password"),
             two_factor_enabled: row.get("two_factor_enabled"),
-            two_factor_required: two_factor_is_required(&row.get::<String, _>("role")),
+            two_factor_required: auth_policy::requires_two_factor_enrollment(
+                &row.get::<String, _>("role"),
+                two_factor_policy_enabled(
+                    std::env::var("APP_ENV")
+                        .is_ok_and(|value| value.eq_ignore_ascii_case("production")),
+                    std::env::var("REQUIRE_TWO_FACTOR").ok().as_deref(),
+                ),
+                row.get("two_factor_exempt"),
+            ),
             competition_id: row.get("competition_id"),
             category: row.get("category"),
+            team_id: row.get("team_id"),
             created_at: row
                 .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
                 .map(|v| v.to_rfc3339())
@@ -895,7 +945,7 @@ async fn current_session(
     headers: HeaderMap,
 ) -> Result<Json<User>, (StatusCode, String)> {
     let user_id = authenticated_user_id(&state, &headers).await?;
-    let row = sqlx::query("SELECT id, full_name, email, role, active, must_change_password, two_factor_enabled, competition_id, category, created_at FROM users WHERE id=$1 AND active=TRUE")
+    let row = sqlx::query("SELECT id, full_name, email, role, active, must_change_password, two_factor_enabled, two_factor_exempt, competition_id, category, team_id, created_at FROM users WHERE id=$1 AND active=TRUE")
         .bind(user_id)
         .fetch_optional(&state.db.pool)
         .await
@@ -909,9 +959,18 @@ async fn current_session(
         active: row.get("active"),
         must_change_password: row.get("must_change_password"),
         two_factor_enabled: row.get("two_factor_enabled"),
-        two_factor_required: two_factor_is_required(&row.get::<String, _>("role")),
+        two_factor_required: auth_policy::requires_two_factor_enrollment(
+            &row.get::<String, _>("role"),
+            two_factor_policy_enabled(
+                std::env::var("APP_ENV")
+                    .is_ok_and(|value| value.eq_ignore_ascii_case("production")),
+                std::env::var("REQUIRE_TWO_FACTOR").ok().as_deref(),
+            ),
+            row.get("two_factor_exempt"),
+        ),
         competition_id: row.get("competition_id"),
         category: row.get("category"),
+        team_id: row.get("team_id"),
         created_at: row
             .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
             .map(|value| value.to_rfc3339())
@@ -1329,12 +1388,438 @@ async fn get_eligibility_report(
             detail: "Document could not be parsed".into(),
         }),
     }
+    if let Some(compliance) = evaluate_template_compliance(&state, &project).await? {
+        checks.push(EligibilityCheck {
+            key: "report_template".into(),
+            label: "Report template compliance".into(),
+            passed: compliance.compliant,
+            detail: compliance.summary.clone(),
+        });
+    }
     let eligible = checks.iter().all(|check| check.passed);
     Ok(Json(EligibilityReport {
         project_id: id,
         eligible,
         checks,
     }))
+}
+
+/// Returns `None` when the competition has no template defined, so a
+/// competition that never configured one is not reported as non-compliant.
+async fn evaluate_template_compliance(
+    state: &AppState,
+    project: &models::Project,
+) -> Result<Option<models::TemplateCompliance>, StatusCode> {
+    let Some(report_template) = state
+        .db
+        .get_report_template(project.competition_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Ok(None);
+    };
+    let Some(document) = state
+        .db
+        .get_project_document(project.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(template::evaluate(
+        project.id,
+        &report_template,
+        &document,
+    )))
+}
+
+async fn get_template_compliance(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::TemplateCompliance>, (StatusCode, String)> {
+    let project = state
+        .db
+        .get_project(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
+    let compliance = evaluate_template_compliance(&state, &project)
+        .await
+        .map_err(|status| (status, "Template compliance failed".to_string()))?;
+    compliance.map(Json).ok_or((
+        StatusCode::NOT_FOUND,
+        "No report template is defined for this competition, or the report could not be parsed"
+            .to_string(),
+    ))
+}
+
+async fn get_category_fit_analysis(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::CategoryFitAnalysis>, StatusCode> {
+    assessment_store::get_category_fit(&state.db.pool, id)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, project_id = id, "category-fit analysis lookup failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+async fn run_category_fit_analysis(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::CategoryFitAnalysis>, (StatusCode, String)> {
+    let project = state
+        .db
+        .get_project(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
+    let analysis = assessment_service::run_category_fit(&state.db, &project)
+        .await
+        .map_err(|error| (StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?;
+    state
+        .db
+        .record_audit(
+            "project_category_fit_analyzed",
+            &actor.email,
+            "project",
+            Some(id),
+            serde_json::json!({
+                "recommended_category": analysis.recommended_category,
+                "requires_review": analysis.requires_review,
+            }),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(analysis))
+}
+
+async fn get_project_similarity_analysis(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::ProjectSimilarityAnalysis>, StatusCode> {
+    assessment_store::get_similarity(&state.db.pool, id)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, project_id = id, "similarity analysis lookup failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+async fn run_project_similarity_analysis(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::ProjectSimilarityAnalysis>, (StatusCode, String)> {
+    let project = state
+        .db
+        .get_project(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
+    let analysis = assessment_service::run_similarity(&state.db, &project)
+        .await
+        .map_err(|error| (StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?;
+    state
+        .db
+        .record_audit(
+            "project_similarity_analyzed",
+            &actor.email,
+            "project",
+            Some(id),
+            serde_json::json!({
+                "highest_similarity": analysis.highest_similarity,
+                "requires_review": analysis.requires_review,
+                "comparison_count": analysis.matches.len(),
+            }),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(analysis))
+}
+
+/// Pure so the gate can be tested without a database. Both gates read the same
+/// compliance result the template module produces.
+fn language_template_gate(
+    compliance: Option<&models::TemplateCompliance>,
+) -> (&'static str, String) {
+    match compliance {
+        Some(item) if item.language_matches && item.word_count_within_range => (
+            "passed",
+            "Language and report-length controls passed".to_string(),
+        ),
+        Some(item) => ("failed", item.summary.clone()),
+        None => (
+            "pending",
+            "A report template and parsed report are required".to_string(),
+        ),
+    }
+}
+
+fn headings_content_gate(
+    compliance: Option<&models::TemplateCompliance>,
+) -> (&'static str, String) {
+    let Some(item) = compliance else {
+        return ("pending", "A parsed report is required".to_string());
+    };
+    let unsatisfied = item
+        .sections
+        .iter()
+        .filter(|section| section.required && !section.is_satisfied())
+        .count();
+    if unsatisfied == 0 {
+        (
+            "passed",
+            "Required headings and minimum section content are present".to_string(),
+        )
+    } else {
+        (
+            "failed",
+            format!("{unsatisfied} required report section(s) need attention"),
+        )
+    }
+}
+
+async fn project_assessment_readiness(
+    state: &AppState,
+    project: &Project,
+) -> Result<models::ProjectAssessmentReadiness, (StatusCode, String)> {
+    let template = evaluate_template_compliance(state, project)
+        .await
+        .map_err(|status| (status, "Report template assessment failed".to_string()))?;
+    let (template_status, template_detail) = language_template_gate(template.as_ref());
+    let (headings_status, headings_detail) = headings_content_gate(template.as_ref());
+    let category = assessment_store::get_category_fit(&state.db.pool, project.id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let similarity = assessment_store::get_similarity(&state.db.pool, project.id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let ai_evaluation = state
+        .db
+        .get_ai_evaluation(project.id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let mut checks = vec![
+        models::AssessmentGate {
+            key: "language_template".into(),
+            label: "Language and template compliance".into(),
+            status: template_status.into(),
+            detail: template_detail,
+            requires_human_review: false,
+        },
+        models::AssessmentGate {
+            key: "headings_content".into(),
+            label: "Headings and required content".into(),
+            status: headings_status.into(),
+            detail: headings_detail,
+            requires_human_review: false,
+        },
+        models::AssessmentGate {
+            key: "category_fit".into(),
+            label: "Category fit".into(),
+            status: if category.is_some() {
+                "passed"
+            } else {
+                "pending"
+            }
+            .into(),
+            detail: category
+                .as_ref()
+                .map(|item| {
+                    format!(
+                        "Recommended category: {} ({:.0}% evidence match)",
+                        item.recommended_category, item.recommended_category_score
+                    )
+                })
+                .unwrap_or_else(|| "Run category-fit analysis".into()),
+            requires_human_review: category.as_ref().is_some_and(|item| item.requires_review),
+        },
+        models::AssessmentGate {
+            key: "similarity".into(),
+            label: "Project similarity".into(),
+            status: if similarity.is_some() {
+                "passed"
+            } else {
+                "pending"
+            }
+            .into(),
+            detail: similarity
+                .as_ref()
+                .map(|item| {
+                    format!(
+                        "Highest internal similarity: {:.0}%",
+                        item.highest_similarity * 100.0
+                    )
+                })
+                .unwrap_or_else(|| "Run project-similarity analysis".into()),
+            requires_human_review: similarity.as_ref().is_some_and(|item| item.requires_review),
+        },
+    ];
+    let (ai_status, ai_detail, feedback_status, feedback_detail) = match ai_evaluation {
+        Some(evaluation) => {
+            let feedback_complete = !evaluation.strengths.is_empty()
+                && !evaluation.weaknesses.is_empty()
+                && !evaluation.missing_information.is_empty()
+                && !evaluation.risks.is_empty();
+            (
+                "passed",
+                format!(
+                    "{} KPI scores generated by {}",
+                    evaluation.kpi_scores.len(),
+                    evaluation.model_version
+                ),
+                if feedback_complete {
+                    "passed"
+                } else {
+                    "failed"
+                },
+                if feedback_complete {
+                    "Strengths, weaknesses, missing information and risks are available".into()
+                } else {
+                    "AI evaluation must include complete applicant feedback".into()
+                },
+            )
+        }
+        None => (
+            "pending",
+            "AI criterion evaluation has not been completed".into(),
+            "pending",
+            "Applicant feedback is generated after AI evaluation".into(),
+        ),
+    };
+    checks.push(models::AssessmentGate {
+        key: "ai_criteria".into(),
+        label: "AI criterion evaluation".into(),
+        status: ai_status.into(),
+        detail: ai_detail,
+        requires_human_review: false,
+    });
+    checks.push(models::AssessmentGate {
+        key: "applicant_feedback".into(),
+        label: "Applicant feedback".into(),
+        status: feedback_status.into(),
+        detail: feedback_detail,
+        requires_human_review: false,
+    });
+    let ready_for_evaluation = checks.iter().all(|check| check.status == "passed");
+    Ok(models::ProjectAssessmentReadiness {
+        project_id: project.id,
+        ready_for_evaluation,
+        checks,
+    })
+}
+
+async fn get_project_assessment_readiness(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::ProjectAssessmentReadiness>, (StatusCode, String)> {
+    let project = state
+        .db
+        .get_project(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
+    project_assessment_readiness(&state, &project)
+        .await
+        .map(Json)
+}
+
+async fn get_report_template(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::ReportTemplate>, (StatusCode, String)> {
+    state
+        .db
+        .get_report_template(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map(Json)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            "No report template is defined for this competition".to_string(),
+        ))
+}
+
+fn validate_report_template(input: &models::UpsertReportTemplate) -> Result<(), String> {
+    if input.name.trim().is_empty() {
+        return Err("Template name is required".into());
+    }
+    if input.expected_language != "Any"
+        && !language::supported_names().contains(&input.expected_language)
+    {
+        return Err(format!(
+            "Unknown expected language: {}. Use a supported language name or Any",
+            input.expected_language
+        ));
+    }
+    if input.min_words < 0 || input.max_words < 0 {
+        return Err("Word limits cannot be negative".into());
+    }
+    if input.max_words > 0 && input.max_words < input.min_words {
+        return Err("The maximum word count cannot be below the minimum".into());
+    }
+    if input.sections.is_empty() {
+        return Err("At least one section is required".into());
+    }
+    if !input.sections.iter().any(|section| section.required) {
+        return Err("At least one section must be required".into());
+    }
+    let mut keys = std::collections::HashSet::new();
+    for section in &input.sections {
+        if section.key.trim().is_empty() || section.title.trim().is_empty() {
+            return Err("Every section needs a key and a title".into());
+        }
+        if section.min_words < 0 {
+            return Err("Section word minimums cannot be negative".into());
+        }
+        if !keys.insert(section.key.trim().to_lowercase()) {
+            return Err(format!("Duplicate section key: {}", section.key));
+        }
+    }
+    Ok(())
+}
+
+async fn update_report_template(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(input): Json<models::UpsertReportTemplate>,
+) -> Result<Json<models::ReportTemplate>, (StatusCode, String)> {
+    if !matches!(actor.role.as_str(), "system_admin" | "competition_manager") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only a competition manager can define the report template".to_string(),
+        ));
+    }
+    validate_report_template(&input).map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let saved = state
+        .db
+        .upsert_report_template(id, &input, &actor.email)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    state
+        .db
+        .record_audit(
+            "report_template_updated",
+            &actor.email,
+            "competition",
+            Some(id),
+            serde_json::json!({
+                "name": saved.name,
+                "version": saved.version,
+                "section_count": saved.sections.len(),
+            }),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(saved))
 }
 
 async fn list_appeals(
@@ -1463,23 +1948,34 @@ async fn upload_project_file(
     let mut file_name = None;
     let mut mime_type = "application/octet-stream".to_string();
     let mut bytes = None;
+    let mut set_as_report = false;
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
     {
-        if field.name().unwrap_or("") == "file" {
-            file_name = field.file_name().map(str::to_string);
-            if let Some(content_type) = field.content_type() {
-                mime_type = content_type.to_string();
+        match field.name().unwrap_or("") {
+            "file" => {
+                file_name = field.file_name().map(str::to_string);
+                if let Some(content_type) = field.content_type() {
+                    mime_type = content_type.to_string();
+                }
+                bytes = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
+                        .to_vec(),
+                );
             }
-            bytes = Some(
-                field
-                    .bytes()
+            "set_as_report" => {
+                let value = field
+                    .text()
                     .await
-                    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
-                    .to_vec(),
-            );
+                    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+                set_as_report = value == "true";
+            }
+            _ => {}
         }
     }
     let file_name = file_name.ok_or((StatusCode::BAD_REQUEST, "Missing file".into()))?;
@@ -1526,6 +2022,17 @@ async fn upload_project_file(
     std::fs::write(&path, &bytes)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let virus_scan = scan_uploaded_file(&path).await?;
+
+    // The report must be parsed from the plaintext bytes on disk, before they
+    // are encrypted at rest below — the same order upload_project follows.
+    let parsed_report = if set_as_report {
+        let document = parser::parse_file(&path)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Parse error: {e}")))?;
+        Some(document)
+    } else {
+        None
+    };
+
     std::fs::write(&path, protect_file_bytes(&bytes)?)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let file = state
@@ -1534,6 +2041,39 @@ async fn upload_project_file(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     state.db.record_audit("project_file_uploaded", &actor.email, "project", Some(id), serde_json::json!({"file_name": file.file_name, "version": file.version, "size_bytes": file.size_bytes, "virus_scan": virus_scan})).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(document) = parsed_report {
+        state
+            .db
+            .update_project_document(id, &document, &path)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        state
+            .db
+            .record_audit(
+                "project_report_attached",
+                &actor.email,
+                "project",
+                Some(id),
+                serde_json::json!({"file_name": file.file_name, "document_filename": document.filename}),
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if let Some(project) = state
+            .db
+            .get_project(id)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            if let Err(error) = assessment_service::run_category_fit(&state.db, &project).await {
+                tracing::error!(%error, project_id = id, "automatic category-fit analysis failed");
+            }
+            if let Err(error) = assessment_service::run_similarity(&state.db, &project).await {
+                tracing::error!(%error, project_id = id, "automatic project-similarity analysis failed");
+            }
+        }
+    }
+
     Ok((StatusCode::CREATED, Json(file)))
 }
 
@@ -1729,11 +2269,13 @@ fn virus_scan_required(production_mode: bool, configured: Option<&str>) -> bool 
         .unwrap_or(production_mode)
 }
 
-const USER_ROLES: [&str; 6] = [
+const USER_ROLES: [&str; 8] = [
     "system_admin",
     "competition_manager",
     "chief_judge",
+    "evaluation_manager",
     "jury_member",
+    "contestant",
     "observer",
     "read_only",
 ];
@@ -1758,6 +2300,12 @@ fn password_reset_token_hash(token: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// The report-template editor offers exactly what the detector can recognise,
+/// so the two never drift apart.
+async fn list_languages() -> Json<Vec<String>> {
+    Json(language::supported_names())
 }
 
 async fn list_roles() -> Json<Vec<RoleDefinition>> {
@@ -1791,12 +2339,25 @@ async fn list_roles() -> Json<Vec<RoleDefinition>> {
             ],
         },
         RoleDefinition {
+            role: "evaluation_manager".into(),
+            permissions: vec![
+                "assessment:manage".into(),
+                "projects:manage".into(),
+                "jury:coordinate".into(),
+                "reports:view".into(),
+            ],
+        },
+        RoleDefinition {
             role: "jury_member".into(),
             permissions: vec![
                 "projects:review".into(),
                 "jury:scores:create".into(),
                 "assigned_scope:read".into(),
             ],
+        },
+        RoleDefinition {
+            role: "contestant".into(),
+            permissions: vec!["own_feedback:read".into()],
         },
         RoleDefinition {
             role: "observer".into(),
@@ -1814,6 +2375,27 @@ async fn list_users(State(state): State<AppState>) -> Result<Json<Vec<User>>, St
         eprintln!("List users error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })
+}
+
+async fn get_my_feedback(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<models::ContestantFeedback>>, (StatusCode, String)> {
+    let team_id = sqlx::query_scalar::<_, Option<i32>>("SELECT team_id FROM users WHERE id = $1")
+        .bind(actor.id)
+        .fetch_one(&state.db.pool)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((
+            StatusCode::FORBIDDEN,
+            "This contestant account is not linked to a team".to_string(),
+        ))?;
+    state
+        .db
+        .list_contestant_feedback(team_id)
+        .await
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
 async fn list_jurors(State(state): State<AppState>) -> Result<Json<Vec<JurorProfile>>, StatusCode> {
@@ -2080,8 +2662,20 @@ async fn create_user(
         || !input.email.contains('@')
         || !valid_role(&input.role)
         || input.password.is_none()
+        || (input.role == "contestant" && input.team_id.is_none())
     {
         return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Some(team_id) = input.team_id {
+        let team_competition_id = state
+            .db
+            .team_competition_id(team_id)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        if input.competition_id != Some(team_competition_id) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
     }
     input.password = input.password.as_deref().map(hash_password).transpose()?;
     let user = state.db.create_user(&input).await.map_err(|e| {
@@ -2370,17 +2964,22 @@ async fn score_and_store(
         "competition_id": competition_id, "team_id": team_id, "name": name, "category": category, "file_path": file_path, "document_filename": document.filename,
         "kpi_template": template.kpis.iter().map(|kpi| &kpi.name).collect::<Vec<_>>(),
     })).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    state
+    let project = state
         .db
         .get_project(id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map(Json)
         .ok_or((
             StatusCode::INTERNAL_SERVER_ERROR,
             "Project not found after insert".to_string(),
-        ))
+        ))?;
+    if let Err(error) = assessment_service::run_category_fit(&state.db, &project).await {
+        tracing::error!(%error, project_id = id, "automatic category-fit analysis failed");
+    }
+    if let Err(error) = assessment_service::run_similarity(&state.db, &project).await {
+        tracing::error!(%error, project_id = id, "automatic project-similarity analysis failed");
+    }
+    Ok(Json(project))
 }
 
 async fn validate_project_scope(
@@ -2696,6 +3295,29 @@ async fn update_stage_status(
                 current.status, input.status
             ),
         ));
+    }
+    if input.status == "completed" {
+        let projects = state
+            .db
+            .list_projects(None, Some(competition_id))
+            .await
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        let mut incomplete = Vec::new();
+        for project in &projects {
+            let readiness = project_assessment_readiness(&state, project).await?;
+            if !readiness.ready_for_evaluation {
+                incomplete.push(format!("PRJ-{:06}", project.id));
+            }
+        }
+        if !incomplete.is_empty() {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "Stage cannot close while mandatory assessment gates are incomplete: {}",
+                    incomplete.join(", ")
+                ),
+            ));
+        }
     }
     let stage = state
         .db
@@ -3096,6 +3718,32 @@ async fn get_ai_evaluation(
         .ok_or(StatusCode::NOT_FOUND)
 }
 
+async fn get_jury_ai_summary(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::JuryAiSummary>, StatusCode> {
+    let evaluation = state
+        .db
+        .get_ai_evaluation(id)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, project_id = id, "jury AI summary lookup failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(models::JuryAiSummary {
+        project_id: evaluation.project_id,
+        total_score: evaluation.total_score,
+        confidence: evaluation.confidence,
+        kpi_scores: evaluation.kpi_scores,
+        strengths: evaluation.strengths,
+        weaknesses: evaluation.weaknesses,
+        missing_information: evaluation.missing_information,
+        risks: evaluation.risks,
+        evaluated_at: evaluation.evaluated_at,
+    }))
+}
+
 async fn upsert_ai_evaluation(
     Extension(actor): Extension<AuthenticatedUser>,
     State(state): State<AppState>,
@@ -3163,6 +3811,21 @@ async fn add_jury_score(
         return Err((
             StatusCode::BAD_REQUEST,
             "Score must be between 0 and 100".into(),
+        ));
+    }
+    let project = state
+        .db
+        .get_project(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
+    if !project_assessment_readiness(&state, &project)
+        .await?
+        .ready_for_evaluation
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "This project has not completed its mandatory assessment gates".into(),
         ));
     }
     if let Some(stage_id) = input.stage_id {
@@ -3337,6 +4000,22 @@ async fn update_project(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Project not found".to_string()))?;
+    if matches!(update.status.as_deref(), Some("reviewing" | "finalist")) {
+        let readiness = project_assessment_readiness(&state, &before).await?;
+        if !readiness.ready_for_evaluation {
+            let pending = readiness
+                .checks
+                .iter()
+                .filter(|check| check.status != "passed")
+                .map(|check| check.label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err((
+                StatusCode::CONFLICT,
+                format!("Project cannot advance until required assessment gates pass: {pending}"),
+            ));
+        }
+    }
     state
         .db
         .update_project(
@@ -3847,317 +4526,7 @@ async fn test_search(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "main_tests.rs"]
+mod tests;
 
-    #[test]
-    fn encrypted_file_round_trip_preserves_content() {
-        let key = [42_u8; 32];
-        let source = b"Jury project report: confidential";
 
-        let encrypted = encrypt_file_bytes(&key, source).expect("file should encrypt");
-        assert!(encrypted.starts_with(ENCRYPTED_FILE_PREFIX));
-        assert_ne!(&encrypted[ENCRYPTED_FILE_PREFIX.len() + 12..], source);
-
-        let decrypted = decrypt_file_bytes(&key, encrypted).expect("file should decrypt");
-        assert_eq!(decrypted, source);
-    }
-
-    #[test]
-    fn competition_scope_is_extracted_only_from_competition_routes() {
-        assert_eq!(
-            competition_id_from_path("/competitions/42/stages"),
-            Some(42)
-        );
-        assert_eq!(competition_id_from_path("/projects/42"), None);
-        assert_eq!(competition_id_from_path("/competitions/not-a-number"), None);
-    }
-
-    #[test]
-    fn role_permissions_restrict_administrative_and_jury_routes() {
-        let jury_member = AuthenticatedUser {
-            id: 7,
-            email: "jury@example.org".into(),
-            role: "jury_member".into(),
-            competition_id: Some(1),
-            category: Some("software".into()),
-        };
-        let chief_judge = AuthenticatedUser {
-            role: "chief_judge".into(),
-            ..jury_member.clone()
-        };
-
-        assert!(!role_allows_request(&jury_member, &Method::GET, "/users"));
-        assert!(!role_allows_request(
-            &jury_member,
-            &Method::PATCH,
-            "/ranking"
-        ));
-        assert!(role_allows_request(
-            &jury_member,
-            &Method::POST,
-            "/projects/3/jury-scores"
-        ));
-        assert!(!role_allows_request(
-            &jury_member,
-            &Method::GET,
-            "/projects/3/ai-evaluation"
-        ));
-        assert!(role_allows_request(
-            &chief_judge,
-            &Method::PATCH,
-            "/ranking"
-        ));
-        assert!(!role_allows_request(&chief_judge, &Method::GET, "/users"));
-        assert!(!role_allows_request(
-            &chief_judge,
-            &Method::GET,
-            "/notifications"
-        ));
-        let observer = AuthenticatedUser {
-            id: 3,
-            email: "observer@example.test".into(),
-            role: "observer".into(),
-            competition_id: Some(1),
-            category: None,
-        };
-        assert!(role_allows_request(&observer, &Method::GET, "/projects/1"));
-        assert!(!role_allows_request(&observer, &Method::GET, "/users"));
-        assert!(!role_allows_request(&observer, &Method::GET, "/audit"));
-        assert!(!role_allows_request(
-            &observer,
-            &Method::GET,
-            "/email-campaigns"
-        ));
-    }
-
-    #[test]
-    fn event_stream_and_observer_safe_reads_follow_role_policy() {
-        let observer = AuthenticatedUser {
-            id: 3,
-            email: "observer@example.test".into(),
-            role: "observer".into(),
-            competition_id: Some(1),
-            category: None,
-        };
-        let jury_member = AuthenticatedUser {
-            id: 4,
-            email: "jury@example.test".into(),
-            role: "jury_member".into(),
-            competition_id: Some(1),
-            category: Some("software".into()),
-        };
-
-        assert!(role_allows_request(&observer, &Method::GET, "/events"));
-        assert!(role_allows_request(&jury_member, &Method::GET, "/events"));
-        assert!(observer_can_read_path("/competitions/1/report"));
-        assert!(!observer_can_read_path("/projects/1/jury-scores"));
-        assert!(!observer_can_read_path("/projects/1/files"));
-    }
-
-    #[test]
-    fn competition_visibility_requires_an_assigned_competition() {
-        let scoped_user = AuthenticatedUser {
-            id: 1,
-            email: "jury@example.test".into(),
-            role: "jury_member".into(),
-            competition_id: Some(10),
-            category: None,
-        };
-        let unscoped_user = AuthenticatedUser {
-            competition_id: None,
-            ..scoped_user.clone()
-        };
-        assert!(competition_is_visible_to(&scoped_user, 10));
-        assert!(!competition_is_visible_to(&scoped_user, 11));
-        assert!(!competition_is_visible_to(&unscoped_user, 10));
-    }
-
-    #[test]
-    fn production_mode_disables_sample_data_by_default() {
-        assert!(!sample_data_enabled(true, None));
-        assert!(sample_data_enabled(false, None));
-        assert!(sample_data_enabled(true, Some("true")));
-    }
-
-    #[test]
-    fn two_factor_secret_storage_supports_encrypted_and_legacy_values() {
-        let stored = protect_totp_secret("JBSWY3DPEHPK3PXP").expect("secret should be stored");
-        assert!(stored.starts_with("plain:"));
-        assert_eq!(
-            unprotect_totp_secret(&stored).expect("stored secret should be readable"),
-            "JBSWY3DPEHPK3PXP"
-        );
-        assert_eq!(
-            unprotect_totp_secret("JBSWY3DPEHPK3PXP").expect("legacy secret should be readable"),
-            "JBSWY3DPEHPK3PXP"
-        );
-    }
-
-    #[test]
-    fn production_requires_a_virus_scan_unless_explicitly_configured() {
-        assert!(virus_scan_required(true, None));
-        assert!(virus_scan_required(true, Some("")));
-        assert!(!virus_scan_required(false, None));
-        assert!(virus_scan_required(false, Some("true")));
-    }
-
-    #[test]
-    fn two_factor_policy_defaults_to_required_in_production() {
-        assert!(two_factor_policy_enabled(true, None));
-        assert!(!two_factor_policy_enabled(false, None));
-        assert!(two_factor_policy_enabled(false, Some("true")));
-        assert!(!two_factor_policy_enabled(true, Some("false")));
-    }
-
-    #[test]
-    fn rate_limit_ignores_spoofed_forwarded_headers_without_a_trusted_proxy() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            HeaderValue::from_static("203.0.113.17, 10.0.0.1"),
-        );
-        assert_eq!(
-            rate_limit_client(&headers, Some("127.0.0.1"), false),
-            "127.0.0.1"
-        );
-        assert_eq!(
-            rate_limit_client(&headers, Some("127.0.0.1"), true),
-            "203.0.113.17"
-        );
-        assert_ne!(rate_limit_key("127.0.0.1".into()), "127.0.0.1");
-    }
-
-    #[test]
-    fn email_retry_delay_uses_bounded_exponential_backoff() {
-        assert_eq!(email_retry_delay(1), Duration::from_secs(30));
-        assert_eq!(email_retry_delay(2), Duration::from_secs(60));
-        assert_eq!(email_retry_delay(8), Duration::from_secs(3600));
-    }
-
-    #[test]
-    fn password_reset_tokens_are_sha256_hashed() {
-        let hash = password_reset_token_hash("reset-token-value");
-        assert_eq!(hash.len(), 64);
-        assert_ne!(hash, "reset-token-value");
-        assert_eq!(hash, password_reset_token_hash("reset-token-value"));
-    }
-
-    #[test]
-    fn recovery_codes_are_normalized_and_generated_as_a_set() {
-        let codes = generate_recovery_codes();
-        assert_eq!(codes.len(), 10);
-        assert!(
-            codes
-                .iter()
-                .all(|code| code.len() == 11 && code.as_bytes()[5] == b'-')
-        );
-        assert_eq!(
-            recovery_code_hash("abcde-f1234"),
-            recovery_code_hash("ABCDE-F1234")
-        );
-    }
-
-    #[test]
-    fn file_encryption_key_requires_a_base64_encoded_32_byte_value() {
-        assert!(
-            parse_file_encryption_key(None)
-                .expect("missing key is valid outside production")
-                .is_none()
-        );
-        assert!(
-            parse_file_encryption_key(Some(""))
-                .expect("empty key is treated as missing")
-                .is_none()
-        );
-        assert!(parse_file_encryption_key(Some("invalid")).is_err());
-        let encoded = STANDARD.encode([7_u8; 32]);
-        assert_eq!(
-            parse_file_encryption_key(Some(&encoded)).expect("valid key should parse"),
-            Some([7_u8; 32])
-        );
-    }
-
-    #[test]
-    fn research_analysis_marks_missing_external_evidence_as_advisory() {
-        let document = models::Document {
-            filename: "proposal.md".into(),
-            file_type: models::FileType::Markdown,
-            raw_text: "Project text".into(),
-            word_count: 2,
-            headings: vec![],
-            keywords: vec!["robotics".into(), "vision".into()],
-            references: vec!["https://example.org/reference".into()],
-            has_references: true,
-            has_abstract: false,
-            has_conclusion: false,
-            has_methodology: false,
-            language: models::Language::English,
-            sections: vec![],
-        };
-        let analysis = build_project_research(7, Some(2), &document, &[]);
-
-        assert_eq!(analysis.project_id, 7);
-        assert_eq!(analysis.source_file_version, Some(2));
-        assert_eq!(analysis.originality_score, 0.0);
-        assert_eq!(analysis.originality_label, "Insufficient external evidence");
-        assert_eq!(analysis.sources.len(), 1);
-    }
-
-    #[test]
-    fn research_analysis_calculates_keyword_overlap_for_external_sources() {
-        let document = models::Document {
-            filename: "proposal.md".into(),
-            file_type: models::FileType::Markdown,
-            raw_text: "Project text".into(),
-            word_count: 2,
-            headings: vec![],
-            keywords: vec!["robotics".into(), "vision".into()],
-            references: vec![],
-            has_references: false,
-            has_abstract: false,
-            has_conclusion: false,
-            has_methodology: false,
-            language: models::Language::English,
-            sections: vec![],
-        };
-        let source = models::SearchResult {
-            title: "Robotics vision paper".into(),
-            url: "https://arxiv.org/abs/1234".into(),
-            snippet: "Computer vision for robotics".into(),
-            source_type: "academic".into(),
-            fetched_content: None,
-            http_status: 200,
-        };
-        let analysis = build_project_research(7, None, &document, &[source]);
-
-        assert_eq!(analysis.sources.len(), 1);
-        assert_eq!(
-            analysis.sources[0].matched_terms,
-            vec!["robotics", "vision"]
-        );
-        assert_eq!(analysis.sources[0].similarity, 1.0);
-        assert_eq!(analysis.originality_score, 0.0);
-    }
-
-    #[test]
-    fn jury_members_cannot_access_ai_research_or_copilot() {
-        let jury_member = AuthenticatedUser {
-            id: 7,
-            email: "jury@example.org".into(),
-            role: "jury_member".into(),
-            competition_id: Some(1),
-            category: Some("software".into()),
-        };
-        assert!(!role_allows_request(
-            &jury_member,
-            &Method::GET,
-            "/projects/3/research"
-        ));
-        assert!(!role_allows_request(
-            &jury_member,
-            &Method::POST,
-            "/projects/3/copilot"
-        ));
-    }
-}

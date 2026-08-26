@@ -164,7 +164,7 @@ fn analyze_text(
     let headings = extract_headings(&heading_source_normalized);
     let keywords = extract_keywords(&normalized);
     let references = extract_references(&normalized);
-    let language = detect_language(&lower);
+    let language = crate::language::detect(&lower);
     let sections = extract_sections(&heading_source_normalized);
 
     let has_abstract = lower.contains("özet") || lower.contains("abstract");
@@ -268,55 +268,9 @@ fn extract_references(text: &str) -> Vec<String> {
     refs.into_iter().take(50).collect()
 }
 
-fn detect_language(text: &str) -> Language {
-    let words: std::collections::HashSet<&str> = text
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .collect();
-
-    let turkish_indicators = ["için", "olan", "veya", "ancak", "çünkü", "çalışma", "proje"];
-    let english_indicators = [
-        "however",
-        "therefore",
-        "furthermore",
-        "research",
-        "study",
-        "analysis",
-    ];
-
-    let tr_count = turkish_indicators
-        .iter()
-        .filter(|w| words.contains(*w))
-        .count();
-    let en_count = english_indicators
-        .iter()
-        .filter(|w| words.contains(*w))
-        .count();
-
-    if tr_count > en_count {
-        Language::Turkish
-    } else if en_count > tr_count {
-        Language::English
-    } else {
-        Language::Unknown
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detects_english_without_false_positive_on_project() {
-        let text = "this project is for analysis, however the study needs more research";
-        assert!(matches!(detect_language(text), Language::English));
-    }
-
-    #[test]
-    fn detects_turkish() {
-        let text = "bu proje için çalışma yapıldı ancak veya olan durumlar önemli";
-        assert!(matches!(detect_language(text), Language::Turkish));
-    }
 
     #[test]
     fn parses_csv_as_a_spreadsheet() {

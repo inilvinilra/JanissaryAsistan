@@ -1,0 +1,13 @@
+---
+description: Keep production code modular, isolate tests, verify and document every delivery.
+alwaysApply: true
+---
+
+# Engineering Delivery Standard
+
+- Keep production modules focused. Extract dedicated modules, services, hooks, and components instead of growing route handlers or screen components indefinitely.
+- Put automated tests in dedicated test files or test modules. Do not mix extensive test scenarios into production source files.
+- Implement the feature first, add or update automated tests, then run the relevant checks before calling it complete.
+- Record completed work and verification evidence in the project plan or test report before committing or pushing.
+- Do not commit generated artifacts, local models, credentials, uploads, build output, or temporary files.
+- Keep user-facing strings in the localization layer and preserve authorization, audit, and data-scope checks when refactoring.

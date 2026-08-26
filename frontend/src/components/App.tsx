@@ -3,6 +3,7 @@ import { ThemeProvider } from '@/lib/theme-context';
 import { LocaleProvider } from '@/lib/locale-context';
 import { ToastProvider } from '@/lib/toast-context';
 import { JuryDashboard } from '@/components/JuryDashboard';
+import { ContestantPortal } from '@/components/ContestantPortal';
 import { AuthGate } from '@/components/AuthGate';
 import { ForcePasswordChange } from '@/components/ForcePasswordChange';
 import { RequireTwoFactor } from '@/components/RequireTwoFactor';
@@ -45,7 +46,7 @@ export function App() {
     <ThemeProvider>
       <LocaleProvider>
         <ToastProvider>
-          <div className="min-h-screen" data-hydrated={hydrated ? 'true' : 'false'}>{resetToken ? <ResetPasswordGate token={resetToken} onCompleted={resetCompleted} /> : session ? (session.user.must_change_password ? <ForcePasswordChange onCompleted={refreshSessionUser} /> : session.user.two_factor_required && !session.user.two_factor_enabled ? <RequireTwoFactor onCompleted={refreshSessionUser} /> : <JuryDashboard onSignOut={signOut} />) : <AuthGate onAuthenticated={setSession} />}</div>
+          <div className="min-h-screen" data-hydrated={hydrated ? 'true' : 'false'}>{resetToken ? <ResetPasswordGate token={resetToken} onCompleted={resetCompleted} /> : session ? (session.user.must_change_password ? <ForcePasswordChange onCompleted={refreshSessionUser} /> : session.user.two_factor_required && !session.user.two_factor_enabled ? <RequireTwoFactor onCompleted={refreshSessionUser} /> : session.user.role === 'contestant' ? <ContestantPortal onSignOut={signOut} /> : <JuryDashboard onSignOut={signOut} />) : <AuthGate onAuthenticated={setSession} />}</div>
         </ToastProvider>
       </LocaleProvider>
     </ThemeProvider>

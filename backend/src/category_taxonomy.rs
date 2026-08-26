@@ -1,0 +1,176 @@
+//! Domain vocabulary per category, in Turkish and English.
+//!
+//! The KPI templates a category carries ("Innovation", "Model Performance") are
+//! written in English and are far too short to identify a Turkish report's
+//! subject: matching them against a Turkish submission produced a near-zero
+//! score for every category, so the recommendation was effectively random.
+//! These lists give the category-fit engine an actual subject vocabulary.
+
+/// Keywords are stored ASCII-folded and lowercase; see [`fold_ascii`].
+pub struct CategoryVocabulary {
+    pub category: &'static str,
+    pub keywords: &'static [&'static str],
+}
+
+/// Turkish letters are folded to their ASCII base so that authoring keywords
+/// stays forgiving and the dotless/dotted I problem disappears on both sides.
+pub fn fold_ascii(input: &str) -> String {
+    input
+        .chars()
+        .flat_map(|character| match character {
+            'ç' | 'Ç' => vec!['c'],
+            'ğ' | 'Ğ' => vec!['g'],
+            'ı' | 'I' => vec!['i'],
+            'İ' | 'i' => vec!['i'],
+            'ö' | 'Ö' => vec!['o'],
+            'ş' | 'Ş' => vec!['s'],
+            'ü' | 'Ü' => vec!['u'],
+            'â' | 'Â' => vec!['a'],
+            'î' | 'Î' => vec!['i'],
+            'û' | 'Û' => vec!['u'],
+            other => other.to_lowercase().collect(),
+        })
+        .collect()
+}
+
+pub const VOCABULARIES: &[CategoryVocabulary] = &[
+    CategoryVocabulary {
+        category: "ai",
+        keywords: &[
+            "yapay zeka", "makine ogrenmesi", "derin ogrenme", "sinir agi", "model egitim",
+            "veri seti", "siniflandirma", "tahmin", "egitim kumesi", "dogruluk", "duyarlilik",
+            "oznitelik", "algoritma", "goruntu isleme", "dogal dil", "artificial intelligence",
+            "machine learning", "deep learning", "neural network", "training", "dataset",
+            "classification", "prediction", "accuracy", "feature", "inference", "transformer",
+        ],
+    },
+    CategoryVocabulary {
+        category: "cybersecurity",
+        keywords: &[
+            "guvenlik", "siber", "saldiri", "zafiyet", "sifreleme", "kimlik dogrulama",
+            "yetkilendirme", "fidye", "zararli yazilim", "virus", "guvenlik duvari", "sizma",
+            "acik", "tehdit", "karantina", "kriptografi", "security", "cyber", "attack",
+            "vulnerability", "encryption", "authentication", "malware", "ransomware",
+            "firewall", "threat", "penetration", "exploit",
+        ],
+    },
+    CategoryVocabulary {
+        category: "data-science",
+        keywords: &[
+            "veri bilimi", "veri analizi", "istatistik", "regresyon", "korelasyon",
+            "gorsellestirme", "veri temizleme", "hipotez", "varyans", "ortalama", "dagilim",
+            "veri madenciligi", "panel", "rapor", "data science", "analytics", "statistics",
+            "regression", "correlation", "visualization", "dashboard", "hypothesis", "variance",
+            "pipeline",
+        ],
+    },
+    CategoryVocabulary {
+        category: "edtech",
+        keywords: &[
+            "egitim", "ogrenci", "ogretmen", "ders", "mufredat", "sinav", "ogrenme",
+            "okul", "universite", "kazanim", "uzaktan egitim", "icerik", "pedagoji",
+            "education", "student", "teacher", "curriculum", "learning", "classroom",
+            "assessment", "course", "pedagogy",
+        ],
+    },
+    CategoryVocabulary {
+        category: "health-tech",
+        keywords: &[
+            "saglik", "hasta", "teshis", "tedavi", "klinik", "hastane", "tibbi", "doktor",
+            "goruntuleme", "tani", "ilac", "hemsire", "biyomedikal", "semptom", "health",
+            "patient", "diagnosis", "treatment", "clinical", "hospital", "medical",
+            "biomedical", "symptom", "therapy",
+        ],
+    },
+    CategoryVocabulary {
+        category: "ktr",
+        keywords: &[
+            "kritik tasarim", "detay tasarim", "tasarim raporu", "prototip", "dogrulama",
+            "test plani", "gereksinim", "alt sistem", "entegrasyon", "critical design",
+            "detailed design", "verification", "requirement", "subsystem", "integration",
+        ],
+    },
+    CategoryVocabulary {
+        category: "mathematics",
+        keywords: &[
+            "matematik", "teorem", "ispat", "denklem", "fonksiyon", "integral", "turev",
+            "olasilik", "cebir", "geometri", "sayi", "kume", "optimizasyon", "mathematics",
+            "theorem", "proof", "equation", "function", "integral", "derivative",
+            "probability", "algebra", "geometry", "optimization",
+        ],
+    },
+    CategoryVocabulary {
+        category: "odr",
+        keywords: &[
+            "on basvuru", "on degerlendirme", "fizibilite", "kavramsal tasarim", "proje ozeti",
+            "hedef", "takvim", "butce", "preliminary", "feasibility", "conceptual design",
+            "milestone", "budget",
+        ],
+    },
+    CategoryVocabulary {
+        category: "physics",
+        keywords: &[
+            "fizik", "kuvvet", "enerji", "manyetik", "elektrik", "dalga", "optik", "termodinamik",
+            "parcacik", "kuantum", "hiz", "ivme", "momentum", "physics", "force", "energy",
+            "magnetic", "electric", "wave", "optics", "thermodynamics", "particle", "quantum",
+            "velocity",
+        ],
+    },
+    CategoryVocabulary {
+        category: "robotics",
+        keywords: &[
+            "robot", "otonom", "insansiz", "eklem", "motor", "sensor", "aktuator", "kinematik",
+            "manipulator", "drone", "arac", "navigasyon", "gomulu", "robotics", "autonomous",
+            "unmanned", "actuator", "kinematics", "manipulator", "navigation", "embedded",
+            "servo",
+        ],
+    },
+    CategoryVocabulary {
+        category: "science",
+        keywords: &[
+            "bilim", "deney", "gozlem", "hipotez", "numune", "laboratuvar", "olcum", "analiz",
+            "kimya", "biyoloji", "molekul", "hucre", "reaksiyon", "science", "experiment",
+            "observation", "laboratory", "measurement", "chemistry", "biology", "molecule",
+            "cell", "reaction",
+        ],
+    },
+    CategoryVocabulary {
+        category: "software",
+        keywords: &[
+            "yazilim", "uygulama", "kod", "arayuz", "veritabani", "sunucu", "istemci", "api",
+            "mobil uygulama", "web", "kutuphane", "derleme", "surum", "mimari", "software",
+            "application", "code", "interface", "database", "server", "client", "framework",
+            "backend", "frontend", "deployment", "architecture",
+        ],
+    },
+    CategoryVocabulary {
+        category: "sustainability",
+        keywords: &[
+            "surdurulebilir", "cevre", "geri donusum", "karbon", "enerji verimliligi",
+            "yenilenebilir", "atik", "iklim", "su tuketimi", "tarim", "sulama", "emisyon",
+            "gunes", "ruzgar", "sustainability", "environment", "recycling", "carbon",
+            "renewable", "waste", "climate", "irrigation", "emission", "solar",
+        ],
+    },
+    CategoryVocabulary {
+        category: "technology",
+        keywords: &[
+            "teknoloji", "sistem", "cihaz", "donanim", "devre", "iletisim", "ag", "protokol",
+            "nesnelerin interneti", "sensor agi", "haberlesme", "technology", "system",
+            "device", "hardware", "circuit", "communication", "network", "protocol", "iot",
+            "telemetry",
+        ],
+    },
+];
+
+pub fn keywords_for(category: &str) -> Option<&'static [&'static str]> {
+    let folded = fold_ascii(category);
+    VOCABULARIES
+        .iter()
+        .find(|item| fold_ascii(item.category) == folded)
+        .map(|item| item.keywords)
+}
+
+#[cfg(test)]
+#[path = "category_taxonomy_tests.rs"]
+mod tests;

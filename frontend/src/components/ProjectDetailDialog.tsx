@@ -3,6 +3,7 @@ import { Download, ExternalLink, FileText, EyeOff } from 'lucide-react';
 
 import {
   getAiEvaluation,
+  getJuryAiSummary,
   addJuryScore,
   getProjectDocument,
   getJuryScores,
@@ -15,12 +16,15 @@ import {
   getAppeals,
   createAppeal,
   getEligibilityReport,
+  getTemplateCompliance,
+  getProjectAssessmentReadiness,
   uploadProjectFile,
   fetchProtectedFile,
   projectVersionFileUrl,
   updateProject,
   projectFileUrl,
   type AiEvaluation,
+  type JuryAiSummary,
   type Document,
   type JuryScore,
   type JuryAssignment,
@@ -31,7 +35,12 @@ import {
   type CompetitionStage,
   type Appeal,
   type EligibilityReport,
+  type TemplateCompliance,
+  type ProjectAssessmentReadiness,
 } from '@/lib/api';
+import { TemplateCompliancePanel } from '@/components/TemplateCompliancePanel';
+import { AssessmentReadinessPanel } from '@/components/AssessmentReadinessPanel';
+import { JuryAiSummaryPanel } from '@/components/JuryAiSummaryPanel';
 import { useLocale } from '@/lib/locale-context';
 import { useToast } from '@/lib/toast-context';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -66,11 +75,13 @@ export function ProjectDetailDialog({
   const { showToast } = useToast();
   const currentRole = typeof localStorage === 'undefined' ? 'read_only' : (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').role || 'read_only'; } catch { return 'read_only'; } })();
   const canViewAiAnalysis = currentRole !== 'jury_member' && currentRole !== 'observer' && currentRole !== 'read_only';
-  const canRunResearch = ['system_admin', 'competition_manager', 'chief_judge'].includes(currentRole);
-  const canUseCopilot = ['system_admin', 'competition_manager', 'chief_judge'].includes(currentRole);
+  const canRunResearch = ['system_admin', 'competition_manager', 'chief_judge', 'evaluation_manager'].includes(currentRole);
+  const canUseCopilot = ['system_admin', 'competition_manager', 'chief_judge', 'evaluation_manager'].includes(currentRole);
+  const canRunAssessmentAnalyses = ['system_admin', 'competition_manager', 'chief_judge', 'evaluation_manager'].includes(currentRole);
   const authenticatedName = typeof localStorage === 'undefined' ? 'Authenticated user' : (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').full_name || 'Authenticated user'; } catch { return 'Authenticated user'; } })();
   const [document, setDocument] = useState<Document | null | undefined>(undefined);
   const [aiEvaluation, setAiEvaluation] = useState<AiEvaluation | null | undefined>(undefined);
+  const [juryAiSummary, setJuryAiSummary] = useState<JuryAiSummary | null | undefined>(undefined);
   const [juryScores, setJuryScores] = useState<JuryScore[]>([]);
   const [juryAssignments, setJuryAssignments] = useState<JuryAssignment[]>([]);
   const [notes, setNotes] = useState('');
@@ -80,6 +91,8 @@ export function ProjectDetailDialog({
   const [appeals, setAppeals] = useState<Appeal[]>([]);
   const [appealReason, setAppealReason] = useState('');
   const [eligibility, setEligibility] = useState<EligibilityReport | null>(null);
+  const [templateCompliance, setTemplateCompliance] = useState<TemplateCompliance | null>(null);
+  const [assessmentReadiness, setAssessmentReadiness] = useState<ProjectAssessmentReadiness | null>(null);
   const [juryStageId, setJuryStageId] = useState('');
   const [evaluationStages, setEvaluationStages] = useState<CompetitionStage[]>([]);
   const [juryComment, setJuryComment] = useState('');
@@ -95,6 +108,7 @@ export function ProjectDetailDialog({
   const [savingMetadata, setSavingMetadata] = useState(false);
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [setAsReportOnUpload, setSetAsReportOnUpload] = useState(false);
   const [versionComparison, setVersionComparison] = useState<string | null>(null);
 
   useEffect(() => {
@@ -104,16 +118,19 @@ export function ProjectDetailDialog({
     setNotes(project.notes);
     setReviewCompleted(project.review_completed);
     setTagText(project.tags.join(', '));
-    Promise.all([getProjectDocument(project.id).catch(() => null), canViewAiAnalysis ? getAiEvaluation(project.id).catch(() => null) : Promise.resolve(null), getJuryScores(project.id).catch(() => []), getJuryAssignments(project.id).catch(() => []), getProjectMetadata(project.id).catch(() => null), getProjectFiles(project.id).catch(() => []), getCompetitions().catch(() => []), getAppeals(project.id).catch(() => []), getEligibilityReport(project.id).catch(() => null)])
-      .then(async ([nextDocument, nextAiEvaluation, nextJuryScores, nextJuryAssignments, nextMetadata, nextFiles, competitions, nextAppeals, nextEligibility]) => {
+    Promise.all([getProjectDocument(project.id).catch(() => null), canViewAiAnalysis ? getAiEvaluation(project.id).catch(() => null) : Promise.resolve(null), currentRole === 'jury_member' ? getJuryAiSummary(project.id).catch(() => null) : Promise.resolve(null), getJuryScores(project.id).catch(() => []), getJuryAssignments(project.id).catch(() => []), getProjectMetadata(project.id).catch(() => null), getProjectFiles(project.id).catch(() => []), getCompetitions().catch(() => []), getAppeals(project.id).catch(() => []), getEligibilityReport(project.id).catch(() => null), getTemplateCompliance(project.id).catch(() => null), getProjectAssessmentReadiness(project.id).catch(() => null)])
+      .then(async ([nextDocument, nextAiEvaluation, nextJuryAiSummary, nextJuryScores, nextJuryAssignments, nextMetadata, nextFiles, competitions, nextAppeals, nextEligibility, nextTemplateCompliance, nextAssessmentReadiness]) => {
         setDocument(nextDocument);
         setAiEvaluation(nextAiEvaluation);
+        setJuryAiSummary(nextJuryAiSummary);
         setJuryScores(nextJuryScores);
         setJuryAssignments(nextJuryAssignments);
         setMetadata(nextMetadata); setInstitution(nextMetadata?.institution ?? ''); setKeywords(nextMetadata?.keywords.join(', ') ?? ''); setGithubUrl(nextMetadata?.github_url ?? ''); setDemoUrl(nextMetadata?.demo_url ?? ''); setPrototypeDescription(nextMetadata?.prototype_description ?? '');
         setProjectFiles(nextFiles);
         setAppeals(nextAppeals);
         setEligibility(nextEligibility);
+        setTemplateCompliance(nextTemplateCompliance);
+        setAssessmentReadiness(nextAssessmentReadiness);
         const stageLists = await Promise.all(competitions.map((competition) => getCompetitionStages(competition.id)));
         setEvaluationStages(stageLists.flat());
         setVersionComparison(null);
@@ -123,6 +140,11 @@ export function ProjectDetailDialog({
         setAiEvaluation(null);
       });
   }, [open, project, canViewAiAnalysis]);
+
+  async function refreshAssessmentReadiness() {
+    if (!project) return;
+    setAssessmentReadiness(await getProjectAssessmentReadiness(project.id));
+  }
 
   if (!project) return null;
 
@@ -179,8 +201,26 @@ export function ProjectDetailDialog({
 
   async function uploadFile(file: File | undefined) {
     if (!file) return;
+    const asReport = setAsReportOnUpload;
     setUploadingFile(true);
-    try { const uploaded = await uploadProjectFile(project.id, file); setProjectFiles((items) => [uploaded, ...items]); showToast(t('fileUploaded'), 'success'); }
+    try {
+      const uploaded = await uploadProjectFile(project.id, file, asReport);
+      setProjectFiles((items) => [uploaded, ...items]);
+      showToast(asReport ? t('fileSetAsReportSuccess') : t('fileUploaded'), 'success');
+      if (asReport) {
+        setSetAsReportOnUpload(false);
+        const [nextDocument, nextEligibility, nextTemplateCompliance, nextReadiness] = await Promise.all([
+          getProjectDocument(project.id).catch(() => null),
+          getEligibilityReport(project.id).catch(() => null),
+          getTemplateCompliance(project.id).catch(() => null),
+          getProjectAssessmentReadiness(project.id).catch(() => null),
+        ]);
+        setDocument(nextDocument);
+        setEligibility(nextEligibility);
+        setTemplateCompliance(nextTemplateCompliance);
+        setAssessmentReadiness(nextReadiness);
+      }
+    }
     catch (e) { showToast((e as Error).message, 'error'); }
     finally { setUploadingFile(false); }
   }
@@ -252,6 +292,7 @@ export function ProjectDetailDialog({
           </div>
 
           {canViewAiAnalysis && <AiAnalysisWorkspace projectId={project.id} evaluation={aiEvaluation} juryScores={juryScores} canRunResearch={canRunResearch} />}
+          {currentRole === 'jury_member' && <JuryAiSummaryPanel summary={juryAiSummary} />}
           {canUseCopilot && <ProjectCopilotPanel projectId={project.id} />}
 
           <div>
@@ -283,10 +324,13 @@ export function ProjectDetailDialog({
           <div className="space-y-2 rounded-lg border p-3"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('appealsTitle')}</p><Textarea value={appealReason} onChange={(e) => setAppealReason(e.target.value)} placeholder={t('appealReasonPlaceholder')} className="min-h-16" /><Button size="sm" variant="outline" onClick={() => void submitAppeal()} disabled={!appealReason.trim()}>{t('saveAppeal')}</Button>{appeals.map((appeal) => <div key={appeal.id} className="rounded-md border bg-background p-2 text-xs"><div className="flex justify-between"><span className="font-medium">{appeal.status}</span><span>{new Date(appeal.created_at).toLocaleDateString()}</span></div><p className="mt-1 text-muted-foreground">{appeal.reason}</p>{appeal.decision_reason && <p className="mt-1 text-primary">{t('decisionLabel')}: {appeal.decision_reason}</p>}</div>)}</div>
 
           {eligibility && <div className="space-y-2 rounded-lg border p-3"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('eligibilityTitle')} · <span className={eligibility.eligible ? 'text-primary' : 'text-destructive'}>{eligibility.eligible ? t('eligible') : t('reviewRequired')}</span></p>{eligibility.checks.map((check) => <div key={check.key} className="flex items-start justify-between gap-3 text-xs"><span>{check.label}<span className="mt-0.5 block text-muted-foreground">{check.detail}</span></span><span className={check.passed ? 'text-primary' : 'text-destructive'}>{check.passed ? t('passed') : t('missing')}</span></div>)}</div>}
+          <TemplateCompliancePanel compliance={templateCompliance} />
+          <AssessmentReadinessPanel projectId={project.id} readiness={assessmentReadiness} canRunAnalysis={canRunAssessmentAnalyses} onUpdated={refreshAssessmentReadiness} />
 
           <div className="space-y-3 rounded-lg border p-3">
             <div className="flex items-center justify-between"><p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t('projectFilesTitle')}</p>{isDesktopApp() ? <button type="button" className="cursor-pointer rounded-md border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed" disabled={uploadingFile} onClick={() => void chooseAndUploadFile()}>{uploadingFile ? t('uploading') : t('uploadFile')}</button> : <label className="cursor-pointer rounded-md border px-3 py-1.5 text-xs hover:bg-accent">{uploadingFile ? t('uploading') : t('uploadFile')}<input type="file" className="hidden" accept=".pdf,.txt,.md,.markdown,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp" disabled={uploadingFile} onChange={(e) => { void uploadFile(e.target.files?.[0]); e.currentTarget.value = ''; }} /></label>}</div>
             <p className="text-muted-foreground text-[11px]">{t('fileVersionDescription')}</p>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={setAsReportOnUpload} onChange={(e) => setSetAsReportOnUpload(e.target.checked)} />{t('setAsReportLabel')}</label>
             <div className="space-y-1.5">{projectFiles.map((file) => <div key={file.id} className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-xs"><span className="truncate"><strong>v{file.version}</strong> · {file.file_name} <span className="text-muted-foreground">({Math.ceil(file.size_bytes / 1024)} KB · {new Date(file.uploaded_at).toLocaleString()})</span></span><button type="button" className="text-primary shrink-0 hover:underline" onClick={() => void openProtectedFile(projectVersionFileUrl(project.id, file.id))}>{t('viewFile')}</button></div>)}{projectFiles.length === 0 && <p className="text-muted-foreground text-xs">{t('noProjectFiles')}</p>}</div>
             {projectFiles.length > 1 && <><Button variant="outline" size="sm" onClick={() => void compareLatestVersions()}>{t('compareVersions')}</Button>{versionComparison && <p className="rounded-md bg-secondary/60 p-2 text-xs">{versionComparison}</p>}</>}
           </div>

@@ -7,7 +7,7 @@ function authHeaders(headers?: HeadersInit): Headers {
   return next;
 }
 
-export interface AuthUser { id: number; full_name: string; email: string; role: string; active: boolean; must_change_password: boolean; two_factor_enabled: boolean; two_factor_required: boolean; competition_id: number | null; category: string | null; created_at: string; }
+export interface AuthUser { id: number; full_name: string; email: string; role: string; active: boolean; must_change_password: boolean; two_factor_enabled: boolean; two_factor_required: boolean; competition_id: number | null; category: string | null; team_id: number | null; created_at: string; }
 export interface AuthSession { token: string; expires_at: string; user: AuthUser; }
 export function login(input: { email: string; password: string; totp_code?: string }): Promise<AuthSession> { return jsonRequest(`${API_URL}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }); }
 export async function logout(token: string): Promise<void> { await fetch(`${API_URL}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }); }
@@ -150,6 +150,17 @@ export interface AiEvaluation {
   similar_projects: SimilarProject[];
   evaluated_at: string;
 }
+export interface JuryAiSummary {
+  project_id: number;
+  total_score: number;
+  confidence: number;
+  kpi_scores: AiKpiEvaluation[];
+  strengths: string[];
+  weaknesses: string[];
+  missing_information: string[];
+  risks: string[];
+  evaluated_at: string;
+}
 
 export interface ResearchSource {
   title: string;
@@ -209,6 +220,75 @@ export function createAppeal(projectId: number, input: { submitted_by: string; r
 export interface EligibilityReport { project_id: number; eligible: boolean; checks: { key: string; label: string; passed: boolean; detail: string }[]; }
 export function getEligibilityReport(projectId: number): Promise<EligibilityReport> { return jsonRequest(`${API_URL}/projects/${projectId}/eligibility`); }
 
+export interface TemplateSection { key: string; title: string; aliases: string[]; min_words: number; required: boolean; }
+export interface ReportTemplate { competition_id: number; name: string; version: number; expected_language: string; min_words: number; max_words: number; sections: TemplateSection[]; updated_at: string; updated_by: string; }
+export interface SectionFinding { key: string; title: string; required: boolean; status: 'present' | 'thin' | 'missing'; matched_heading: string | null; word_count: number; min_words: number; detail: string; }
+export interface TemplateCompliance {
+  project_id: number;
+  template_name: string;
+  template_version: number;
+  compliant: boolean;
+  section_score: number;
+  sections: SectionFinding[];
+  language_expected: string;
+  language_detected: string;
+  language_matches: boolean;
+  word_count: number;
+  min_words: number;
+  max_words: number;
+  word_count_within_range: boolean;
+  summary: string;
+  evaluated_at: string;
+}
+export interface CategoryFitAnalysis {
+  project_id: number;
+  source_file_version: number | null;
+  current_category_score: number;
+  recommended_category: string;
+  recommended_category_score: number;
+  matched_terms: string[];
+  requires_review: boolean;
+  analyzed_at: string;
+}
+export interface ProjectSimilarityMatch {
+  project_id: number;
+  project_reference: string;
+  category: string;
+  similarity: number;
+  matched_terms: string[];
+}
+export interface ProjectSimilarityAnalysis {
+  project_id: number;
+  source_file_version: number | null;
+  highest_similarity: number;
+  requires_review: boolean;
+  matches: ProjectSimilarityMatch[];
+  analyzed_at: string;
+}
+export interface AssessmentGate {
+  key: string;
+  label: string;
+  status: 'passed' | 'failed' | 'pending';
+  detail: string;
+  requires_human_review: boolean;
+}
+export interface ProjectAssessmentReadiness {
+  project_id: number;
+  ready_for_evaluation: boolean;
+  checks: AssessmentGate[];
+}
+export function getSupportedLanguages(): Promise<string[]> { return jsonRequest(`${API_URL}/languages`); }
+export function getTemplateCompliance(projectId: number): Promise<TemplateCompliance> { return jsonRequest(`${API_URL}/projects/${projectId}/template-compliance`); }
+export async function getCategoryFitAnalysis(projectId: number): Promise<CategoryFitAnalysis | null> { const response = await fetch(`${API_URL}/projects/${projectId}/category-fit`, { headers: authHeaders() }); if (response.status === 404) return null; if (!response.ok) throw new Error(`Category-fit request failed: ${response.status}`); return response.json(); }
+export function runCategoryFitAnalysis(projectId: number): Promise<CategoryFitAnalysis> { return jsonRequest(`${API_URL}/projects/${projectId}/category-fit`, { method: 'POST' }); }
+export async function getProjectSimilarityAnalysis(projectId: number): Promise<ProjectSimilarityAnalysis | null> { const response = await fetch(`${API_URL}/projects/${projectId}/similarity`, { headers: authHeaders() }); if (response.status === 404) return null; if (!response.ok) throw new Error(`Similarity request failed: ${response.status}`); return response.json(); }
+export function runProjectSimilarityAnalysis(projectId: number): Promise<ProjectSimilarityAnalysis> { return jsonRequest(`${API_URL}/projects/${projectId}/similarity`, { method: 'POST' }); }
+export function getProjectAssessmentReadiness(projectId: number): Promise<ProjectAssessmentReadiness> { return jsonRequest(`${API_URL}/projects/${projectId}/assessment-readiness`); }
+export function getReportTemplate(competitionId: number): Promise<ReportTemplate> { return jsonRequest(`${API_URL}/competitions/${competitionId}/report-template`); }
+export function saveReportTemplate(competitionId: number, input: { name: string; expected_language: string; min_words: number; max_words: number; sections: TemplateSection[] }): Promise<ReportTemplate> {
+  return jsonRequest(`${API_URL}/competitions/${competitionId}/report-template`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+
 export interface DemoDaySlot {
   id: number;
   competition_id: number;
@@ -237,7 +317,7 @@ export interface CompetitionReport {
   demo_day_slots: number;
 }
 
-export type UserRole = 'system_admin' | 'competition_manager' | 'chief_judge' | 'jury_member' | 'observer' | 'read_only';
+export type UserRole = 'system_admin' | 'competition_manager' | 'chief_judge' | 'evaluation_manager' | 'jury_member' | 'observer' | 'read_only';
 export interface RoleDefinition { role: UserRole; permissions: string[]; }
 export interface User {
   id: number;
@@ -247,8 +327,12 @@ export interface User {
   active: boolean;
   competition_id: number | null;
   category: string | null;
+  team_id: number | null;
   created_at: string;
 }
+export interface CategoryFitSummary { current_category_score: number; recommended_category: string; recommended_category_score: number; requires_review: boolean; }
+export interface ContestantFeedback { project_id: number; project_name: string; category: string; status: ProjectStatus; total_score: number; strengths: string[]; weaknesses: string[]; missing_information: string[]; risks: string[]; evaluated_at: string; category_fit: CategoryFitSummary | null; }
+export function getMyFeedback(): Promise<ContestantFeedback[]> { return jsonRequest(`${API_URL}/my-feedback`); }
 
 export interface AuditEvent {
   id: number;
@@ -279,7 +363,7 @@ export function dispatchEmailCampaign(id: number): Promise<EmailCampaign> { retu
 export function createUser(input: Omit<User, 'id' | 'active' | 'must_change_password' | 'created_at'> & { password: string }): Promise<User> {
   return jsonRequest(`${API_URL}/users`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 }
-export function updateUser(id: number, input: Partial<Pick<User, 'role' | 'active' | 'competition_id' | 'category'>>): Promise<User> {
+export function updateUser(id: number, input: Partial<Pick<User, 'role' | 'active' | 'competition_id' | 'category' | 'team_id'>>): Promise<User> {
   return jsonRequest(`${API_URL}/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 }
 export interface PasswordResetToken { token: string; expires_at: string; }
@@ -321,8 +405,10 @@ export function updateProjectMetadata(id: number, input: Partial<Omit<ProjectMet
 
 export interface ProjectFile { id: number; project_id: number; version: number; file_name: string; mime_type: string; size_bytes: number; file_path: string; uploaded_at: string; }
 export function getProjectFiles(id: number): Promise<ProjectFile[]> { return jsonRequest(`${API_URL}/projects/${id}/files`); }
-export function uploadProjectFile(id: number, file: File): Promise<ProjectFile> {
-  const body = new FormData(); body.append('file', file);
+export function uploadProjectFile(id: number, file: File, setAsReport = false): Promise<ProjectFile> {
+  const body = new FormData();
+  body.append('file', file);
+  if (setAsReport) body.append('set_as_report', 'true');
   return jsonRequest(`${API_URL}/projects/${id}/files`, { method: 'POST', body });
 }
 export function projectVersionFileUrl(projectId: number, fileId: number): string { return `${API_URL}/projects/${projectId}/files/${fileId}`; }
@@ -345,7 +431,7 @@ export interface Document {
   has_abstract: boolean;
   has_conclusion: boolean;
   has_methodology: boolean;
-  language: 'Turkish' | 'English' | 'Unknown';
+  language: string;
   sections: Section[];
 }
 
@@ -475,6 +561,12 @@ export async function getAiEvaluation(projectId: number): Promise<AiEvaluation |
   const res = await fetch(`${API_URL}/projects/${projectId}/ai-evaluation`, { headers: authHeaders() });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`AI evaluation request failed: ${res.status}`);
+  return res.json();
+}
+export async function getJuryAiSummary(projectId: number): Promise<JuryAiSummary | null> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/jury-ai-summary`, { headers: authHeaders() });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Jury AI summary request failed: ${res.status}`);
   return res.json();
 }
 

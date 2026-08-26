@@ -141,7 +141,7 @@ mod tests {
             has_abstract: true,
             has_conclusion: true,
             has_methodology: true,
-            language: crate::models::Language::English,
+            language: crate::models::Language::english(),
             sections: vec![],
         };
         let kpis = vec![

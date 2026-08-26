@@ -44,10 +44,10 @@ export function Sidebar({
   const signedInUser = typeof window !== 'undefined' ? (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}'); } catch { return {}; } })() : {};
   const signedInName = signedInUser.full_name || 'Authenticated user';
   const role = signedInUser.role || 'read_only';
-  const canManageCompetitions = ['system_admin', 'competition_manager', 'chief_judge'].includes(role);
+  const canManageCompetitions = ['system_admin', 'competition_manager', 'chief_judge', 'evaluation_manager'].includes(role);
   const canManageUsers = role === 'system_admin';
   const canViewAudit = role === 'system_admin';
-  const canViewReports = ['system_admin', 'competition_manager', 'chief_judge', 'observer', 'read_only'].includes(role);
+  const canViewReports = ['system_admin', 'competition_manager', 'chief_judge', 'evaluation_manager', 'observer', 'read_only'].includes(role);
   const canManageNotifications = role === 'system_admin';
 
   const totalProjects = Object.values(categoryCounts).reduce((sum, n) => sum + n, 0);

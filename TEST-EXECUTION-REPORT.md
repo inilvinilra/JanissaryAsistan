@@ -26,6 +26,13 @@ This report records the automated and live verification completed in the isolate
 | Tauri desktop shell | `cargo check` in `kys-app/src-tauri` | Passed with native file select/save plugin integration |
 | Tauri desktop package | `npm run desktop:build` from `frontend` | Passed; Linux `.deb` package and desktop executable produced |
 | Runtime recovery | API and frontend health checks after a clean Astro restart | Both returned `200`; React hydration verified in Chromium |
+| Assessment workflow API acceptance | `backend/scripts/assessment-api-smoke-test.sh` in an isolated PostgreSQL environment | Passed: two project uploads, category-fit analysis, internal similarity analysis, and assessment-readiness gates |
+| Production upload safety | Isolated production-profile API attempt without a ready ClamAV service | Passed: upload rejected with `503`; 2FA enrollment was required before protected operations |
+| Account-specific 2FA policy | Dedicated authorization-policy unit tests and local database verification | Passed: 63/63 backend tests; one approved system-administrator account exempted, with no other exempt accounts |
+| Assessment panel browser acceptance — access | Manual acceptance by a system administrator in the local dashboard | Passed: `Assessment readiness` panel and authorized `Run analyses` button were visible |
+| Assessment panel browser acceptance — existing project | Manual run against a project without an analyzed report | Passed validation behavior: API returned `422 A parsed project report is required`; analysis was not run without source content |
+| Assessment panel browser acceptance — report upload prerequisite | Manual `Proje Ekle` attempt with a Markdown report in the production-profile backend | Blocked safely: API returned `503 Virus scanner is unavailable; upload is blocked`. No ClamAV service was running, so no unscanned file was accepted. |
+| Assessment panel browser acceptance — remaining | Manual test with a parsed report after ClamAV is available | Pending: category-fit result, similarity result, persistence after refresh, high-similarity `Review` flag, and stage-advance gate |
 
 ## Manual Acceptance Ownership
 

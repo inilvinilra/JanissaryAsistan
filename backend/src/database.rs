@@ -12,6 +12,14 @@ const PERFORMANCE_INDEX_MIGRATION_VERSION: i64 = 2;
 const PERFORMANCE_INDEX_MIGRATION_NAME: &str = "operational_indexes";
 const AI_ANALYSIS_MIGRATION_VERSION: i64 = 3;
 const AI_ANALYSIS_MIGRATION_NAME: &str = "ai_analysis_workspace";
+const REPORT_TEMPLATE_MIGRATION_VERSION: i64 = 4;
+const REPORT_TEMPLATE_MIGRATION_NAME: &str = "report_templates";
+const ASSESSMENT_MIGRATION_VERSION: i64 = 5;
+const ASSESSMENT_MIGRATION_NAME: &str = "project_assessment_analyses";
+const PARTICIPANT_ACCESS_MIGRATION_VERSION: i64 = 6;
+const PARTICIPANT_ACCESS_MIGRATION_NAME: &str = "participant_feedback_access";
+const TWO_FACTOR_EXEMPTION_MIGRATION_VERSION: i64 = 7;
+const TWO_FACTOR_EXEMPTION_MIGRATION_NAME: &str = "per_user_two_factor_exemption";
 
 pub struct Database {
     pub pool: PgPool,
@@ -66,7 +74,7 @@ impl Database {
             sqlx::query_scalar("SELECT MAX(version) FROM schema_migrations")
                 .fetch_one(&self.pool)
                 .await?;
-        if applied_version.is_some_and(|version| version > AI_ANALYSIS_MIGRATION_VERSION) {
+        if applied_version.is_some_and(|version| version > TWO_FACTOR_EXEMPTION_MIGRATION_VERSION) {
             anyhow::bail!("Database schema version is newer than this application supports");
         }
         let applied_version = applied_version.unwrap_or_default();
@@ -88,6 +96,101 @@ impl Database {
             self.record_migration(AI_ANALYSIS_MIGRATION_VERSION, AI_ANALYSIS_MIGRATION_NAME)
                 .await?;
         }
+        if applied_version < REPORT_TEMPLATE_MIGRATION_VERSION {
+            self.apply_report_templates().await?;
+            self.record_migration(
+                REPORT_TEMPLATE_MIGRATION_VERSION,
+                REPORT_TEMPLATE_MIGRATION_NAME,
+            )
+            .await?;
+        }
+        if applied_version < ASSESSMENT_MIGRATION_VERSION {
+            self.apply_project_assessment_analyses().await?;
+            self.record_migration(ASSESSMENT_MIGRATION_VERSION, ASSESSMENT_MIGRATION_NAME)
+                .await?;
+        }
+        if applied_version < PARTICIPANT_ACCESS_MIGRATION_VERSION {
+            self.apply_participant_feedback_access().await?;
+            self.record_migration(
+                PARTICIPANT_ACCESS_MIGRATION_VERSION,
+                PARTICIPANT_ACCESS_MIGRATION_NAME,
+            )
+            .await?;
+        }
+        if applied_version < TWO_FACTOR_EXEMPTION_MIGRATION_VERSION {
+            self.apply_two_factor_exemptions().await?;
+            self.record_migration(
+                TWO_FACTOR_EXEMPTION_MIGRATION_VERSION,
+                TWO_FACTOR_EXEMPTION_MIGRATION_NAME,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn apply_two_factor_exemptions(&self) -> Result<()> {
+        sqlx::query(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_exempt BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_project_assessment_analyses(&self) -> Result<()> {
+        for statement in [
+            "CREATE TABLE IF NOT EXISTS project_category_fit_analyses (
+                project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                source_file_version INTEGER,
+                current_category_score DOUBLE PRECISION NOT NULL,
+                recommended_category TEXT NOT NULL,
+                recommended_category_score DOUBLE PRECISION NOT NULL,
+                matched_terms JSONB NOT NULL DEFAULT '[]'::jsonb,
+                requires_review BOOLEAN NOT NULL DEFAULT FALSE,
+                analyzed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )",
+            "CREATE TABLE IF NOT EXISTS project_similarity_analyses (
+                project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                source_file_version INTEGER,
+                highest_similarity DOUBLE PRECISION NOT NULL,
+                requires_review BOOLEAN NOT NULL DEFAULT FALSE,
+                matches JSONB NOT NULL DEFAULT '[]'::jsonb,
+                analyzed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )",
+            "CREATE INDEX IF NOT EXISTS project_category_fit_review_idx ON project_category_fit_analyses (requires_review) WHERE requires_review = TRUE",
+            "CREATE INDEX IF NOT EXISTS project_similarity_review_idx ON project_similarity_analyses (requires_review) WHERE requires_review = TRUE",
+        ] {
+            sqlx::query(statement).execute(&self.pool).await?;
+        }
+        Ok(())
+    }
+
+    async fn apply_participant_feedback_access(&self) -> Result<()> {
+        for statement in [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL",
+            "CREATE INDEX IF NOT EXISTS users_team_id_idx ON users (team_id) WHERE team_id IS NOT NULL",
+        ] {
+            sqlx::query(statement).execute(&self.pool).await?;
+        }
+        Ok(())
+    }
+
+    async fn apply_report_templates(&self) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS report_templates (
+                competition_id INTEGER PRIMARY KEY REFERENCES competitions(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                expected_language TEXT NOT NULL DEFAULT 'Any',
+                min_words BIGINT NOT NULL DEFAULT 0,
+                max_words BIGINT NOT NULL DEFAULT 0,
+                sections JSONB NOT NULL DEFAULT '[]'::jsonb,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_by TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -3804,6 +3907,24 @@ impl Database {
         Ok(value.map(serde_json::from_value).transpose()?)
     }
 
+    /// Attaches a parsed report to a project created without one, or replaces an
+    /// outdated one. Only the analysable content changes; KPI scores are left
+    /// untouched so a jury's existing evaluation is never silently overwritten.
+    pub async fn update_project_document(
+        &self,
+        id: i32,
+        document: &Document,
+        file_path: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query("UPDATE projects SET document = $1, file_path = $2 WHERE id = $3")
+            .bind(serde_json::to_value(document)?)
+            .bind(file_path)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn get_project_file_path(&self, id: i32) -> Result<Option<String>> {
         let row = sqlx::query("SELECT file_path FROM projects WHERE id = $1")
             .bind(id)
@@ -4210,6 +4331,73 @@ impl Database {
         row.map(|value| ai_evaluation_from_row(&value)).transpose()
     }
 
+    pub async fn get_report_template(
+        &self,
+        competition_id: i32,
+    ) -> Result<Option<crate::models::ReportTemplate>> {
+        let row = sqlx::query(
+            "SELECT competition_id, name, version, expected_language, min_words, max_words,
+                    sections, updated_at, updated_by
+             FROM report_templates WHERE competition_id = $1",
+        )
+        .bind(competition_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|value| report_template_from_row(&value))
+            .transpose()
+    }
+
+    /// Every saved edit bumps the version so a compliance result always names
+    /// the template revision it was produced against.
+    pub async fn upsert_report_template(
+        &self,
+        competition_id: i32,
+        input: &crate::models::UpsertReportTemplate,
+        updated_by: &str,
+    ) -> Result<crate::models::ReportTemplate> {
+        let row = sqlx::query(
+            "INSERT INTO report_templates
+                (competition_id, name, version, expected_language, min_words, max_words, sections, updated_at, updated_by)
+             VALUES ($1, $2, 1, $3, $4, $5, $6, NOW(), $7)
+             ON CONFLICT (competition_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                version = report_templates.version + 1,
+                expected_language = EXCLUDED.expected_language,
+                min_words = EXCLUDED.min_words,
+                max_words = EXCLUDED.max_words,
+                sections = EXCLUDED.sections,
+                updated_at = NOW(),
+                updated_by = EXCLUDED.updated_by
+             RETURNING competition_id, name, version, expected_language, min_words, max_words,
+                       sections, updated_at, updated_by",
+        )
+        .bind(competition_id)
+        .bind(&input.name)
+        .bind(&input.expected_language)
+        .bind(input.min_words)
+        .bind(input.max_words)
+        .bind(serde_json::to_value(&input.sections)?)
+        .bind(updated_by)
+        .fetch_one(&self.pool)
+        .await?;
+        report_template_from_row(&row)
+    }
+
+    pub async fn seed_default_report_template(&self, competition_id: i32) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO report_templates
+                (competition_id, name, version, expected_language, min_words, max_words, sections, updated_by)
+             VALUES ($1, $2, 1, 'Turkish', 500, 10000, $3, 'system')
+             ON CONFLICT (competition_id) DO NOTHING",
+        )
+        .bind(competition_id)
+        .bind("TEKNOFEST Proje Detay Raporu")
+        .bind(serde_json::to_value(crate::template::default_sections())?)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn latest_project_file_version(&self, project_id: i32) -> Result<Option<i32>> {
         sqlx::query_scalar("SELECT MAX(version) FROM project_files WHERE project_id = $1")
             .bind(project_id)
@@ -4382,7 +4570,7 @@ impl Database {
     }
 
     pub async fn list_users(&self) -> Result<Vec<crate::models::User>> {
-        let rows = sqlx::query("SELECT id, full_name, email, role, active, must_change_password, two_factor_enabled, competition_id, category, created_at FROM users ORDER BY full_name, id")
+        let rows = sqlx::query("SELECT id, full_name, email, role, active, must_change_password, two_factor_enabled, competition_id, category, team_id, created_at FROM users ORDER BY full_name, id")
             .fetch_all(&self.pool).await?;
         Ok(rows
             .iter()
@@ -4397,9 +4585,57 @@ impl Database {
                 two_factor_required: false,
                 competition_id: row.get("competition_id"),
                 category: row.get("category"),
+                team_id: row.get("team_id"),
                 created_at: timestamp_text(row, "created_at"),
             })
             .collect())
+    }
+
+    pub async fn list_contestant_feedback(
+        &self,
+        team_id: i32,
+    ) -> Result<Vec<crate::models::ContestantFeedback>> {
+        let rows = sqlx::query(
+            "SELECT p.id, p.name, p.category, p.status, a.total_score, a.strengths, a.weaknesses,
+                    a.missing_information, a.risks, a.evaluated_at,
+                    c.current_category_score, c.recommended_category,
+                    c.recommended_category_score, c.requires_review AS category_requires_review
+             FROM projects p
+             JOIN ai_evaluations a ON a.project_id = p.id
+             LEFT JOIN project_category_fit_analyses c ON c.project_id = p.id
+             WHERE p.team_id = $1
+             ORDER BY a.evaluated_at DESC, p.id DESC",
+        )
+        .bind(team_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                // The category-fit analysis is optional — a manager may not have
+                // run it yet — so its columns come back NULL via the LEFT JOIN.
+                let category_fit = row
+                    .get::<Option<String>, _>("recommended_category")
+                    .map(|recommended_category| crate::models::CategoryFitSummary {
+                        current_category_score: row.get("current_category_score"),
+                        recommended_category,
+                        recommended_category_score: row.get("recommended_category_score"),
+                        requires_review: row.get("category_requires_review"),
+                    });
+                Ok(crate::models::ContestantFeedback {
+                    project_id: row.get("id"),
+                    project_name: row.get("name"),
+                    category: row.get("category"),
+                    status: crate::models::ProjectStatus::from_str(row.get("status")),
+                    total_score: row.get("total_score"),
+                    strengths: json_array(row, "strengths")?,
+                    weaknesses: json_array(row, "weaknesses")?,
+                    missing_information: json_array(row, "missing_information")?,
+                    risks: json_array(row, "risks")?,
+                    evaluated_at: timestamp_text(row, "evaluated_at"),
+                    category_fit,
+                })
+            })
+            .collect()
     }
 
     pub async fn list_notifications(&self, limit: i64) -> Result<Vec<crate::models::Notification>> {
@@ -4568,8 +4804,8 @@ impl Database {
         &self,
         input: &crate::models::CreateUser,
     ) -> Result<crate::models::User> {
-        let row = sqlx::query("INSERT INTO users (full_name, email, role, competition_id, category, password_hash, must_change_password) VALUES ($1,$2,$3,$4,$5,$6,TRUE) RETURNING id, full_name, email, role, active, must_change_password, two_factor_enabled, competition_id, category, created_at")
-            .bind(&input.full_name).bind(&input.email).bind(&input.role).bind(input.competition_id).bind(&input.category).bind(&input.password)
+        let row = sqlx::query("INSERT INTO users (full_name, email, role, competition_id, category, team_id, password_hash, must_change_password) VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE) RETURNING id, full_name, email, role, active, must_change_password, two_factor_enabled, competition_id, category, team_id, created_at")
+            .bind(&input.full_name).bind(&input.email).bind(&input.role).bind(input.competition_id).bind(&input.category).bind(input.team_id).bind(&input.password)
             .fetch_one(&self.pool).await?;
         self.user_from_row(&row)
     }
@@ -4614,8 +4850,8 @@ impl Database {
         id: i32,
         input: &crate::models::UpdateUser,
     ) -> Result<crate::models::User> {
-        let row = sqlx::query("UPDATE users SET role = COALESCE($2, role), active = COALESCE($3, active), competition_id = COALESCE($4, competition_id), category = COALESCE($5, category), password_hash = COALESCE($6, password_hash) WHERE id = $1 RETURNING id, full_name, email, role, active, must_change_password, two_factor_enabled, competition_id, category, created_at")
-            .bind(id).bind(&input.role).bind(input.active).bind(input.competition_id).bind(&input.category).bind(&input.password)
+        let row = sqlx::query("UPDATE users SET role = COALESCE($2, role), active = COALESCE($3, active), competition_id = COALESCE($4, competition_id), category = COALESCE($5, category), team_id = COALESCE($6, team_id), password_hash = COALESCE($7, password_hash) WHERE id = $1 RETURNING id, full_name, email, role, active, must_change_password, two_factor_enabled, competition_id, category, team_id, created_at")
+            .bind(id).bind(&input.role).bind(input.active).bind(input.competition_id).bind(&input.category).bind(input.team_id).bind(&input.password)
             .fetch_one(&self.pool).await?;
         self.user_from_row(&row)
     }
@@ -4632,6 +4868,7 @@ impl Database {
             two_factor_required: false,
             competition_id: row.get("competition_id"),
             category: row.get("category"),
+            team_id: row.get("team_id"),
             created_at: timestamp_text(row, "created_at"),
         })
     }
@@ -4940,6 +5177,7 @@ mod tests {
         assert_ne!(first, second);
     }
 }
+
 fn member_from_row(row: &PgRow) -> crate::models::TeamMember {
     crate::models::TeamMember {
         id: row.get("id"),
@@ -4954,7 +5192,7 @@ fn member_from_row(row: &PgRow) -> crate::models::TeamMember {
 }
 async fn team_from_row(pool: &PgPool, row: &PgRow) -> Result<crate::models::Team> {
     let member_rows = sqlx::query("SELECT id, team_id, full_name, email, role, is_scholar, birth_year, education_level FROM team_members WHERE team_id = $1 ORDER BY id")
-        .bind(row.get::<i32, _>("id")).fetch_all(pool).await?;
+    .bind(row.get::<i32, _>("id")).fetch_all(pool).await?;
     Ok(crate::models::Team {
         id: row.get("id"),
         competition_id: row.get("competition_id"),
@@ -4983,6 +5221,21 @@ fn submission_from_row(row: &PgRow) -> crate::models::Submission {
 fn json_array<T: serde::de::DeserializeOwned>(row: &PgRow, key: &str) -> Result<T> {
     Ok(serde_json::from_value(row.get(key))?)
 }
+fn report_template_from_row(row: &PgRow) -> Result<crate::models::ReportTemplate> {
+    let updated_at: chrono::DateTime<chrono::Utc> = row.get("updated_at");
+    Ok(crate::models::ReportTemplate {
+        competition_id: row.get("competition_id"),
+        name: row.get("name"),
+        version: row.get("version"),
+        expected_language: row.get("expected_language"),
+        min_words: row.get("min_words"),
+        max_words: row.get("max_words"),
+        sections: json_array(row, "sections")?,
+        updated_at: updated_at.to_rfc3339(),
+        updated_by: row.get("updated_by"),
+    })
+}
+
 fn ai_evaluation_from_row(row: &PgRow) -> Result<crate::models::AiEvaluation> {
     Ok(crate::models::AiEvaluation {
         project_id: row.get("project_id"),

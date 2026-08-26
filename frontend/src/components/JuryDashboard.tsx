@@ -68,7 +68,7 @@ export function JuryDashboard({ onSignOut }: { onSignOut: () => Promise<void> })
   const [sortBy, setSortBy] = useState<'score' | 'name'>('score');
   const [view, setView] = useState<'dashboard' | 'competitions' | 'users' | 'audit' | 'reports' | 'settings' | 'notifications'>('dashboard');
   const currentRole = typeof localStorage === 'undefined' ? 'read_only' : (() => { try { return JSON.parse(localStorage.getItem('jury-auth-user') ?? '{}').role || 'read_only'; } catch { return 'read_only'; } })();
-  const canCreateProjects = ['system_admin', 'competition_manager', 'chief_judge'].includes(currentRole);
+  const canCreateProjects = ['system_admin', 'competition_manager', 'chief_judge', 'evaluation_manager'].includes(currentRole);
   const canViewActivity = currentRole === 'system_admin';
 
   const sensors = useSensors(

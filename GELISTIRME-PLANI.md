@@ -401,6 +401,96 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 
 ---
 
+## Problem 4 MVP kontrol fazları
+
+Bu fazlar şu teslim sırasıyla izlenir: geliştirme → ayrı test dosyaları → başarılı doğrulama → bu plana kayıt. Başarısız ya da henüz doğrulanmamış bir değişiklik tamamlandı olarak işaretlenmez.
+
+### Faz 1. Dil ve rapor şablonu uygunluğu
+
+**Durum:** Tamamlandı ve doğrulandı
+
+- [x] Rapor dili tespiti
+- [x] Yaklaşık 70 dil için desteklenen dil listesi
+- [x] Yarışma bazlı beklenen dil tanımı
+- [x] Rapor şablonu ve kelime sınırı kontrolü
+
+**Doğrulama:**
+
+- 2026-08-26: Dil tespit birim testleri ve şablon doğrulama testleri başarıyla geçti.
+- 2026-08-26: Tam backend paketi `cargo test --quiet` ile 60/60 başarılı.
+- 2026-08-26: Frontend birim testleri 4/4 başarılı; production build başarılı.
+- 2026-08-26: Dil tespiti gerçek belgelerle uçtan uca sınandı: 13 belge (Türkçe akademik/kısa/karışık terimli, İngilizce akademik/kısa, Almanca, Fransızca, İspanyolca, Arapça, Rusça, Çince, Azerice, sembolik/belirsiz metin) → 13/13 doğru. Almanca ve Azerice, Türkçe ile paylaşılan harfler (ç/ö/ü, ğ/ı/ş) yüzünden yanlış sınıflandırılıyordu; harf ağırlıkları ve Azerice'ye özgü "ə" işareti eklenerek düzeltildi.
+
+### Faz 2. Başlık ve zorunlu içerik uygunluğu
+
+**Durum:** Tamamlandı ve doğrulandı
+
+- [x] Zorunlu başlıkların şablonla eşleştirilmesi
+- [x] Bölüm bazlı asgari içerik/kelime kontrolü
+- [x] Eksik ve yetersiz bölümlerin gerekçeli gösterimi
+- [x] Proje detayında uygunluk paneli
+
+**Doğrulama:**
+
+- 2026-08-26: Başlık eşleştirme, eksik bölüm ve yetersiz içerik senaryoları backend test paketi içinde başarılı.
+- 2026-08-26: Tam backend paketi `cargo test --quiet` ile 60/60 başarılı.
+- 2026-08-26: Frontend birim testleri 4/4 başarılı; production build başarılı.
+- 2026-08-26: `assessment-readiness` kapısında bulunan bir hata düzeltildi: "Headings and required content" kapısı `template.rs`'in hiç üretmediği bir durum değerine (`"passed"`) göre filtreleniyordu, bu yüzden şablona kusursuz uyan bir rapor bile bu kapıda hep `failed` sonucu veriyordu ve `ready_for_evaluation` hiçbir projede `true` olamıyordu. `SectionFinding::is_satisfied()` ile tek sözlüğe bağlandı; kapı mantığı test edilebilir saf fonksiyonlara (`language_template_gate`, `headings_content_gate`) çıkarıldı. Hata geri konup testin gerçekten düştüğü, düzeltmeyle geçtiği kanıtlandı. Canlı ortamda şablona uyan/uymayan iki raporla doğrulandı.
+
+### Faz 3. Kategori uygunluğu ve başvurular arası benzerlik
+
+**Durum:** Tamamlandı ve doğrulandı
+
+- [x] Kategori uyumu analiz motoru
+- [x] Başvurular arası benzerlik analiz motoru
+- [x] Analiz kayıtları ve proje ilerletme kontrol kapısı
+- [x] API ve veritabanı uçtan uca doğrulaması
+- [x] Operasyon ekranında panel görünürlüğü ve yetkili analiz düğmesi kabul testi
+- [x] Operasyon ekranında raporlu başvuru ile analiz, kalıcılık, yüksek benzerlik ve aşama engeli kabul testleri
+
+**Kapsam dışı — ayrı iş kalemi:** `AI criterion evaluation` ve `Applicant feedback` kapıları `ai_evaluations` tablosuna bakar; bu tablo yalnızca gerçek bir AI/LLM servisi bağlandığında dolar. AI modeli eğitildi ancak henüz bağlanmadı (kullanıcı kararı: önce bu faz bitecek, bağlantı sonra yapılacak). `Run analyses` düğmesi kategori uyumu ve benzerliği çalıştırır; bu iki kapıyı kasıtlı olarak kapsamaz. Bağlantı yapıldığında bu iki kapı otomatik olarak dolacaktır, ayrı kod değişikliği gerekmez.
+
+**Bu oturumda düzeltilen iki gerçek hata:**
+
+1. **Kategori uyumu işlevsizdi.** Motor, rapor metnini kategorilerin İngilizce KPI açıklamalarıyla (`"Model Performance — Accuracy, robustness..."`) karşılaştırıyordu. Türkçe bir rapor bu sözlükle neredeyse hiç örtüşmediği için her kategori ~%5-6 puan alıyor ve öneri rastgele çıkıyordu. `backend/src/category_taxonomy.rs` eklendi: 14 kategorinin her biri için Türkçe+İngilizce anahtar kelime sözlüğü, Türkçe ek çekimlerini yakalayan eşleştirme (`sulama` → `sulamada`). Doğrulama: siber güvenlik raporu artık doğru şekilde `cybersecurity`'e (%22.5) eşleşiyor; önceden her kategori ~%5-6 civarındaydı.
+2. **Benzerlik tek yönlüydü.** Bir proje analiz edildiğinde yalnızca kendi kaydı yazılıyordu; daha önce yüklenmiş projelerin kaydı güncellenmiyordu. Sonuç: aynı raporun kopyası A→B yönünde `%99, incele` derken B→A yönünde `%0, inceleme yok` diyordu — kopya başvuru ilk yüklenen üzerinden gizlenebiliyordu. `assessment_service.rs`'e `propagate_matches` eklendi: bir proje analiz edildiğinde eşleştiği tüm projelerin kayıtları da güncellenir. Doğrulama: üç ayırt edici belgeyle (tarım, siber güvenlik, tarımın kopyası) temiz bir yarışmada uçtan uca sınandı, simetri doğrulandı.
+
+Ayrıca aynı oturumda bulunan üçüncü bir gerçek eksik: proje detayındaki "Dosya yükle" akışı dosyayı yalnızca sürümlü ek olarak saklıyordu, hiç ayrıştırmıyordu — mevcut bir projeye rapor bağlamanın hiçbir yolu yoktu (`422 A parsed project report is required`). Yükleme isteğine `set_as_report` alanı eklendi: işaretlenirse dosya ayrıştırılır, `projects.document`/`file_path` güncellenir, kategori uyumu ve benzerlik otomatik yeniden çalıştırılır. Arayüze "Bu dosyayı projenin resmi raporu olarak ayarla" onay kutusu eklendi. Gerçek bir projede (id 14) önce/sonra karşılaştırmasıyla canlı doğrulandı.
+
+**Ara doğrulama:**
+
+- 2026-08-26: Kategori uyumu ve benzerlik analiz motorunun ayrı birim testleri dahil tam backend paketi `cargo test --quiet` ile 63/63 başarılı.
+- 2026-08-26: Frontend birim testleri 4/4 başarılı; production build başarılı.
+- 2026-08-26: `backend/scripts/assessment-api-smoke-test.sh`, temiz izole PostgreSQL ortamında iki Markdown başvurusu ile çalıştırıldı. Başvuru yükleme, kategori uyumu, proje benzerliği ve hazırbulunuşluk kapılarının API/veritabanı akışı başarılı geçti.
+- 2026-08-26: Production profilde zorunlu 2FA kaydı ve kullanılabilir virüs tarayıcısı olmadan dosya yüklemesinin reddedildiği doğrulandı. İşlevsel kabul testi, virüs taramasının geliştirme modunda kapalı olduğu izole konteynerde uygulandı.
+- 2026-08-26: Kullanıcı bazlı 2FA istisnası eklendi. Onaylı yerel sistem yöneticisi hesabı için 2FA devre dışı bırakıldı; diğer kullanıcıların istisna kaydı olmadığı ve zorunlu 2FA politikasının korunacağı doğrulandı. Ayrı yetki politikası testleri ve tam backend paketi `cargo test --quiet` ile 63/63 başarılı.
+- 2026-08-26: Kullanıcı kabulünde mevcut bir proje açıldı; `Assessment readiness` paneli ve yetkili kullanıcıya ait `Run analyses` düğmesi görünerek panel erişim testi geçti.
+- 2026-08-26: Aynı mevcut projede analiz başlatma denemesi `422 A parsed project report is required` ile durdu. Bu doğrulama hatası, projenin analiz edilebilir ayrıştırılmış raporu bulunmadığını doğru biçimde belirtti. Proje detayındaki `Dosya yükle` akışı yalnızca sürümlü ek dosya kaydeder; bu akış mevcut projeye analiz raporu bağlamaz. Raporlu test projesi, üst menüdeki `Proje Ekle` akışıyla oluşturulmalıdır.
+- 2026-08-26: Raporlu test projesi oluşturma denemesi `503 Virus scanner is unavailable; upload is blocked` ile durdu. Çalışan production-profile backend yanında ClamAV servisi yoktur. Bu, güvenlik açısından beklenen fail-closed davranıştır; dosya virüs taraması olmadan sisteme alınmamıştır.
+- 2026-08-26: Faz 3'ün kalan kabul testi, gerçek geliştirme veritabanına bağlı canlı backend üzerinde tamamlandı. Temiz bir yarışmada üç ayırt edici belge (tarım, siber güvenlik, tarımın kopyası) yüklendi: kategori uyumu doğru kategoriyi önerdi, benzerlik simetrik çalıştı (her iki proje de karşılıklı olarak birbirini gördü), sonuçlar sayfa yenilemesi sonrası kalıcıydı (veritabanında saklanıyor), yüksek benzerlikte `requires_review=true` işaretlendi. Ayrıca gerçek kullanıcı projesinde (id 14) "Dosya yükle → resmi rapor olarak ayarla" akışı uçtan uca doğrulandı.
+- 2026-08-26: Faz 3 tamamlandı olarak işaretlendi.
+- 2026-08-26: Benzerlik analizinde canlı sınama sırasında üç gerçek hata bulunup düzeltildi: (1) doldurulmuş intihal tespit edilemiyordu — kısa bir rapor alakasız uzun metinle "sulandırılırsa" Jaccard benzerliği düşüyordu (%32.9, eşiğin altında); içerme katsayısı (containment coefficient) eklendi, aynı senaryo artık %100 ve `requires_review=true`. (2) Türkçe çekim ekleri ("sulama"/"sulamada") ayrı token sayılıyordu; 5 karakterlik kök kesme eklendi. (3) Her raporda ortak geçen şablon başlıkları ("Özet", "Sonuç") sahte benzerlik üretiyordu; şablonun kendi başlık listesinden (`template.rs::default_sections()`) otomatik olarak dışlandı, elle liste tutulmuyor. Her düzeltme için önce başarısız test yazıldı, düzeltme geçici olarak geri alınıp testin gerçekten düştüğü kanıtlandı, sonra kalıcı hale getirildi. Backend testleri 78 → 82. Kalan bilinen sınırlar: karşılaştırma kapsamı yalnızca aynı yarışma içinde (kullanıcı onayı bekleniyor — yarışmalar arası da eklensin mi); kök kesme bazı alakasız kelimeleri birleştirebiliyor (ör. "elektrik"/"elektronik") — danışma niteliğindeki bir araç için kabul edilebilir, tam çözüm AI bağlantısına bağlı.
+
+### Faz 4. AI kriter değerlendirmesi ve geri bildirim
+
+**Durum:** Bekliyor — dış bağımlılık kullanıcıda
+
+Brief'teki madde numaralandırması (01-06) yanıltıcı: metin taşması yüzünden aslında yalnızca dört ayrı gereksinim var. "02" ve "05" bağımsız madde değil, "01" ve "04"ün açıklama kısmının taştığı ikinci kutular. Gerçek dördüncü ve son madde budur; Faz 1-3 ilk üç maddeyi karşılıyor.
+
+- [ ] Gerçek AI/LLM servisine bağlantı (`AI_SCORING_URL`) — **kullanıcı tarafından yapılacak, kapsam dışı**
+- [ ] `ai_evaluations` sözleşmesinin gerçek modelle uçtan uca doğrulanması
+- [x] Yarışmacı geri bildirim portalının (`ContestantPortal`) AI bağlantısından bağımsız kısımları uçtan uca doğrulandı — bkz. aşağıdaki not. **Gerçek AI çıktısıyla henüz doğrulanmadı.**
+- [ ] Hakem AI özet panelinin (`JuryAiSummaryPanel`) gerçek AI çıktısıyla görsel doğrulaması
+- [ ] Faz 2'nin kalan boşluğu: "beklenen içerik" kontrolü şu an yalnızca kelime sayısına bakıyor, bölümün konusunu anlamıyor — bu, AI bağlantısıyla birlikte kapanacak
+
+**Not (2026-08-26):** AI modeli ayrı olarak eğitildi ancak sisteme henüz bağlanmadı; bağlantıyı kullanıcı kendisi yapacak. Bu fazın kod tarafında hazır olan kısmı (sözleşme, veritabanı, arayüz bileşenleri) önceki fazlarda tamamlandı.
+
+AI bağlantısından bağımsız olarak yapılabilecek tek iş — yarışmacı portalının doğru çalıştığının kanıtlanması — bu oturumda tamamlandı: iki test takımı ve iki `contestant` kullanıcısı oluşturuldu; doğru portala yönlendirme, `403` ile diğer uç noktalara erişimin engellenmesi, AI değerlendirmesi hiç yokken ekranın çökmeden temiz bir mesaj göstermesi, ve takımlar arası veri izolasyonu (`/my-feedback` başka takımın verisini döndürmüyor) canlı olarak doğrulandı. Ayrıca kullanıcı isteğiyle, jüri tarafında zaten çalışan kategori uyumu analizi yarışmacı portalına da eklendi (`ContestantFeedback.category_fit`, takım bazlı izolasyon aynı sorguyla korunuyor); geçici bir test verisiyle görsel olarak doğrulanıp veritabanından silindi.
+
+**Bu fazın gerçek anlamda "tamamlandı" sayılabilmesi, kullanıcının AI bağlantısını yapmasına bağlı.** O olmadan madde 06 (AI kriter değerlendirmesi) ve madde 03'ün kalan %15'i kapanamaz.
+
+---
+
 ## Geliştirme sırası
 
 1. Yarışma, kategori ve proje yönetimi
@@ -422,3 +512,14 @@ AI modelinin eğitimi ve model iç mantığı başka ekip tarafından yapılacak
 - 2026-08-11: Kapsam ve sorumluluklar netleştirildi.
 - 2026-08-11: AI model eğitiminin başka ekipte olduğu kesinleştirildi.
 - 2026-08-11: Yarışma, aşama ve kategori backend altyapısı başlatıldı.
+
+## Push öncesi zorunlu temizlik
+
+Push talimatı geldiğinde, commit veya push işleminden hemen önce aşağıdaki geçici test varlıklarını kullanıcıyla doğrula ve temizle:
+
+- [ ] Geçici Docker test konteynerleri ve test veritabanları
+- [ ] `/tmp` altındaki geçici test başvuruları ve çalışma dosyaları
+- [ ] Geçici test kullanıcıları, oturumlar ve iki faktör kayıtları
+- [ ] Kaynak koda veya Git geçmişine girmemesi gereken test/kimlik bilgileri
+
+Kalıcı, gizli bilgi içermeyen test betikleri korunur. Kullanıcı açıkça istemeden hiçbir branch'e push yapılmaz.
