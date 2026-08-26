@@ -3,6 +3,7 @@ import { CheckCircle2, CircleAlert, CircleDashed, RefreshCw } from 'lucide-react
 
 import {
   runCategoryFitAnalysis,
+  runCriterionEvaluation,
   runProjectSimilarityAnalysis,
   type ProjectAssessmentReadiness,
 } from '@/lib/api';
@@ -27,18 +28,27 @@ export function AssessmentReadinessPanel({
   onUpdated: () => Promise<void>;
 }) {
   const { showToast } = useToast();
-  const [running, setRunning] = useState(false);
+  const [stage, setStage] = useState<'idle' | 'analysing' | 'evaluating'>('idle');
+  const running = stage !== 'idle';
 
   async function runPendingAnalyses() {
-    setRunning(true);
     try {
+      // Category fit and similarity first: the criterion evaluation reads both
+      // so it can put their findings in front of the judge as risks. Running
+      // them together would evaluate against whatever the previous run left.
+      setStage('analysing');
       await Promise.all([runCategoryFitAnalysis(projectId), runProjectSimilarityAnalysis(projectId)]);
+      setStage('evaluating');
+      await runCriterionEvaluation(projectId);
       await onUpdated();
-      showToast('Category and similarity analyses completed.', 'success');
+      showToast('Category, similarity and criterion evaluation completed.', 'success');
     } catch (error) {
+      // An earlier gate may already have succeeded, so the panel is refreshed
+      // either way rather than leaving it showing stale results.
+      await onUpdated().catch(() => {});
       showToast((error as Error).message, 'error');
     } finally {
-      setRunning(false);
+      setStage('idle');
     }
   }
 
@@ -53,7 +63,7 @@ export function AssessmentReadinessPanel({
         </div>
         {canRunAnalysis && <Button size="sm" variant="outline" disabled={running} onClick={() => void runPendingAnalyses()}>
           <RefreshCw className={`size-3.5 ${running ? 'animate-spin' : ''}`} />
-          {running ? 'Analyzing…' : 'Run analyses'}
+          {stage === 'analysing' ? 'Analyzing…' : stage === 'evaluating' ? 'Evaluating criteria…' : 'Run analyses'}
         </Button>}
       </div>
       {!readiness ? <p className="text-xs text-muted-foreground">Readiness data is loading.</p> : <ul className="space-y-2">

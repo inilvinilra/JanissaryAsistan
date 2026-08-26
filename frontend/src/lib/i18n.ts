@@ -4,6 +4,10 @@ type Dict = Record<string, string>;
 
 const dictionaries: Record<Locale, Dict> = {
   tr: {
+    runAiEvaluation: 'AI değerlendirmesini çalıştır',
+    rerunAiEvaluation: 'Yeniden değerlendir',
+    aiEvaluationRunning: 'Değerlendiriliyor…',
+    aiEvaluationCompleted: 'AI kriter değerlendirmesi tamamlandı.',
     appName: 'Jüri Asistanı',
     tagline: 'AI destekli proje değerlendirme paneli',
     selectCategoryPlaceholder: 'Alan seçin',
@@ -382,6 +386,10 @@ const dictionaries: Record<Locale, Dict> = {
     lockResults: 'Sonuçları kilitle',
   },
   en: {
+    runAiEvaluation: 'Run AI evaluation',
+    rerunAiEvaluation: 'Re-evaluate',
+    aiEvaluationRunning: 'Evaluating…',
+    aiEvaluationCompleted: 'AI criterion evaluation completed.',
     appName: 'Jury Assistant',
     tagline: 'AI-assisted project scoring panel',
     selectCategoryPlaceholder: 'Select a category',

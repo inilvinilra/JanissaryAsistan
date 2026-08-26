@@ -288,6 +288,8 @@ export async function getCategoryFitAnalysis(projectId: number): Promise<Categor
 export function runCategoryFitAnalysis(projectId: number): Promise<CategoryFitAnalysis> { return jsonRequest(`${API_URL}/projects/${projectId}/category-fit`, { method: 'POST' }); }
 export async function getProjectSimilarityAnalysis(projectId: number): Promise<ProjectSimilarityAnalysis | null> { const response = await fetch(`${API_URL}/projects/${projectId}/similarity`, { headers: authHeaders() }); if (response.status === 404) return null; if (!response.ok) throw new Error(`Similarity request failed: ${response.status}`); return response.json(); }
 export function runProjectSimilarityAnalysis(projectId: number): Promise<ProjectSimilarityAnalysis> { return jsonRequest(`${API_URL}/projects/${projectId}/similarity`, { method: 'POST' }); }
+/** Runs MVP gate 06: scores the report against the competition's criteria and produces applicant feedback. */
+export function runCriterionEvaluation(projectId: number): Promise<AiEvaluation> { return jsonRequest(`${API_URL}/projects/${projectId}/ai-evaluation/run`, { method: 'POST' }); }
 export function getProjectAssessmentReadiness(projectId: number): Promise<ProjectAssessmentReadiness> { return jsonRequest(`${API_URL}/projects/${projectId}/assessment-readiness`); }
 export function getReportTemplate(competitionId: number): Promise<ReportTemplate> { return jsonRequest(`${API_URL}/competitions/${competitionId}/report-template`); }
 export function saveReportTemplate(competitionId: number, input: { name: string; expected_language: string; min_words: number; max_words: number; sections: TemplateSection[] }): Promise<ReportTemplate> {

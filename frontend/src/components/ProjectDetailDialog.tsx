@@ -141,9 +141,17 @@ export function ProjectDetailDialog({
       });
   }, [open, projectProp, canViewAiAnalysis]);
 
+  /// Running the gates rewrites the stored criterion evaluation as well as the
+  /// readiness result, so both panels are refreshed together — otherwise the AI
+  /// workspace keeps showing the evaluation from before the run.
   async function refreshAssessmentReadiness() {
     if (!projectProp) return;
-    setAssessmentReadiness(await getProjectAssessmentReadiness(projectProp.id));
+    const [nextReadiness, nextEvaluation] = await Promise.all([
+      getProjectAssessmentReadiness(projectProp.id),
+      canViewAiAnalysis ? getAiEvaluation(projectProp.id).catch(() => null) : Promise.resolve(null),
+    ]);
+    setAssessmentReadiness(nextReadiness);
+    if (canViewAiAnalysis) setAiEvaluation(nextEvaluation);
   }
 
   if (!projectProp) return null;
@@ -294,7 +302,7 @@ export function ProjectDetailDialog({
             )}
           </div>
 
-          {canViewAiAnalysis && <AiAnalysisWorkspace projectId={project.id} evaluation={aiEvaluation} juryScores={juryScores} canRunResearch={canRunResearch} />}
+          {canViewAiAnalysis && <AiAnalysisWorkspace projectId={project.id} evaluation={aiEvaluation} juryScores={juryScores} canRunResearch={canRunResearch} onEvaluationRun={canRunAssessmentAnalyses ? refreshAssessmentReadiness : undefined} />}
           {currentRole === 'jury_member' && <JuryAiSummaryPanel summary={juryAiSummary} />}
           {canUseCopilot && <ProjectCopilotPanel projectId={project.id} />}
 

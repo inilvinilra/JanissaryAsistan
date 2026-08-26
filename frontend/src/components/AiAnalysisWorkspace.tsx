@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BrainCircuit, ExternalLink, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
 
-import { getProjectResearch, runProjectResearch, type AiEvaluation, type JuryScore, type ProjectResearchAnalysis } from '@/lib/api';
+import { getProjectResearch, runCriterionEvaluation, runProjectResearch, type AiEvaluation, type JuryScore, type ProjectResearchAnalysis } from '@/lib/api';
 import { useLocale } from '@/lib/locale-context';
 import { useToast } from '@/lib/toast-context';
 import { Button } from '@/components/ui/button';
@@ -43,11 +43,12 @@ function ResearchStat({ value, label }: { value: number; label: string }) {
   return <div className="rounded-lg border p-3 text-center"><p className="font-data text-xl font-semibold">{value}</p><p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p></div>;
 }
 
-export function AiAnalysisWorkspace({ projectId, evaluation, juryScores, canRunResearch }: { projectId: number; evaluation: AiEvaluation | null | undefined; juryScores: JuryScore[]; canRunResearch: boolean }) {
+export function AiAnalysisWorkspace({ projectId, evaluation, juryScores, canRunResearch, onEvaluationRun }: { projectId: number; evaluation: AiEvaluation | null | undefined; juryScores: JuryScore[]; canRunResearch: boolean; onEvaluationRun?: () => Promise<void> }) {
   const { t } = useLocale();
   const { showToast } = useToast();
   const [research, setResearch] = useState<ProjectResearchAnalysis | null>(null);
   const [loadingResearch, setLoadingResearch] = useState(false);
+  const [runningEvaluation, setRunningEvaluation] = useState(false);
   const juryAverage = useMemo(() => juryScores.length ? juryScores.reduce((total, score) => total + score.total_score, 0) / juryScores.length : null, [juryScores]);
 
   useEffect(() => {
@@ -67,14 +68,36 @@ export function AiAnalysisWorkspace({ projectId, evaluation, juryScores, canRunR
     }
   }
 
+  async function runEvaluation() {
+    if (!onEvaluationRun) return;
+    setRunningEvaluation(true);
+    try {
+      await runCriterionEvaluation(projectId);
+      await onEvaluationRun();
+      showToast(t('aiEvaluationCompleted'), 'success');
+    } catch (error) {
+      showToast((error as Error).message, 'error');
+    } finally {
+      setRunningEvaluation(false);
+    }
+  }
+
   if (evaluation === undefined) return <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{t('loading')}</div>;
-  if (!evaluation) return <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{t('aiAnalysisUnavailable')}</div>;
+  // No stored evaluation yet. For a role that may start one this is an action,
+  // not a dead end — the judge should not have to leave the AI panel to run it.
+  if (!evaluation) return <div className="space-y-3 rounded-xl border border-dashed p-4">
+    <p className="text-sm text-muted-foreground">{t('aiAnalysisUnavailable')}</p>
+    {onEvaluationRun && <Button size="sm" variant="outline" disabled={runningEvaluation} onClick={() => void runEvaluation()}>
+      <BrainCircuit className={`mr-1.5 size-3.5 ${runningEvaluation ? 'animate-pulse' : ''}`} />
+      {runningEvaluation ? t('aiEvaluationRunning') : t('runAiEvaluation')}
+    </Button>}
+  </div>;
 
   return (
     <section className="space-y-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/[0.07] via-background to-background p-4 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3"><span className="rounded-xl bg-primary/10 p-2 text-primary"><BrainCircuit className="size-5" /></span><div><p className="font-semibold">{t('aiAnalysisWorkspace')}</p><p className="mt-0.5 text-xs text-muted-foreground">{evaluation.model_version} · {t('aiEvaluatedAt')} {new Date(evaluation.evaluated_at).toLocaleString()}</p></div></div>
-        <div className="rounded-lg border bg-background px-3 py-1.5 text-right"><p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('aiConfidence')}</p><p className="font-data text-sm font-semibold">{Math.round(evaluation.confidence * 100)}%</p></div>
+        <div className="flex items-center gap-2"><div className="rounded-lg border bg-background px-3 py-1.5 text-right"><p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('aiConfidence')}</p><p className="font-data text-sm font-semibold">{Math.round(evaluation.confidence * 100)}%</p></div>{onEvaluationRun && <Button size="sm" variant="outline" disabled={runningEvaluation} onClick={() => void runEvaluation()}><RefreshCw className={`mr-1.5 size-3.5 ${runningEvaluation ? 'animate-spin' : ''}`} />{runningEvaluation ? t('aiEvaluationRunning') : t('rerunAiEvaluation')}</Button>}</div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
