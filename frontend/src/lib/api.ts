@@ -360,7 +360,12 @@ export interface User {
   created_at: string;
 }
 export interface CategoryFitSummary { current_category_score: number; recommended_category: string; recommended_category_score: number; requires_review: boolean; }
-export interface ContestantFeedback { project_id: number; project_name: string; category: string; status: ProjectStatus; total_score: number; strengths: string[]; weaknesses: string[]; missing_information: string[]; risks: string[]; evaluated_at: string; category_fit: CategoryFitSummary | null; }
+/**
+ * What the applicant portal shows. The evaluation's `risks` list is absent by
+ * design: it is written for the judge and names the reference of any submission
+ * this one resembles, which must not be disclosed to another entrant.
+ */
+export interface ContestantFeedback { project_id: number; project_name: string; category: string; status: ProjectStatus; total_score: number; strengths: string[]; weaknesses: string[]; suggestions: string[]; evaluated_at: string; category_fit: CategoryFitSummary | null; }
 export function getMyFeedback(): Promise<ContestantFeedback[]> { return jsonRequest(`${API_URL}/my-feedback`); }
 
 export interface AuditEvent {

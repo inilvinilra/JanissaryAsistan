@@ -559,6 +559,16 @@ pub struct UpdateUser {
     pub password: Option<String>,
 }
 
+/// What an applicant is shown: the three things the brief promises them —
+/// strengths, areas to improve, and suggestions.
+///
+/// Deliberately not the whole evaluation. The `risks` list is written for the
+/// judge and carries signals that must not cross to an applicant: it names the
+/// reference of the submission theirs resembles, which would disclose another
+/// team's entry, and it discusses how far the AI's own scores can be trusted,
+/// which is a question for the judge rather than the applicant. Leaving the
+/// field out of this type keeps that separation structural rather than relying
+/// on every future caller to remember to filter it.
 #[derive(Debug, Clone, Serialize)]
 pub struct ContestantFeedback {
     pub project_id: i32,
@@ -567,9 +577,10 @@ pub struct ContestantFeedback {
     pub status: ProjectStatus,
     pub total_score: f64,
     pub strengths: Vec<String>,
+    /// Areas to improve.
     pub weaknesses: Vec<String>,
-    pub missing_information: Vec<String>,
-    pub risks: Vec<String>,
+    /// Concrete actions, drawn from what the evaluation found missing.
+    pub suggestions: Vec<String>,
     pub evaluated_at: String,
     /// `None` until a manager runs the category-fit analysis for this project.
     pub category_fit: Option<CategoryFitSummary>,

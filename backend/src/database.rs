@@ -4596,8 +4596,11 @@ impl Database {
         team_id: i32,
     ) -> Result<Vec<crate::models::ContestantFeedback>> {
         let rows = sqlx::query(
+            // `risks` is intentionally not selected: it is written for the
+            // judge and names the reference of any submission this one
+            // resembles, which must not reach an applicant.
             "SELECT p.id, p.name, p.category, p.status, a.total_score, a.strengths, a.weaknesses,
-                    a.missing_information, a.risks, a.evaluated_at,
+                    a.missing_information, a.evaluated_at,
                     c.current_category_score, c.recommended_category,
                     c.recommended_category_score, c.requires_review AS category_requires_review
              FROM projects p
@@ -4629,8 +4632,7 @@ impl Database {
                     total_score: row.get("total_score"),
                     strengths: json_array(row, "strengths")?,
                     weaknesses: json_array(row, "weaknesses")?,
-                    missing_information: json_array(row, "missing_information")?,
-                    risks: json_array(row, "risks")?,
+                    suggestions: json_array(row, "missing_information")?,
                     evaluated_at: timestamp_text(row, "evaluated_at"),
                     category_fit,
                 })
