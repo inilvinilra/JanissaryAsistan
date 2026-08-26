@@ -19,6 +19,7 @@
 use std::collections::BTreeSet;
 
 use crate::category_taxonomy::fold_ascii;
+use crate::criterion_vocabulary;
 use crate::models::{AiKpiEvaluation, Document, KpiTemplate, UpsertAiEvaluation};
 
 /// Quoted evidence is trimmed so the judge sees a sentence, not a page.
@@ -26,6 +27,9 @@ const MAX_EVIDENCE_CHARS: usize = 240;
 const MAX_EVIDENCE_PER_CRITERION: usize = 3;
 /// Sentences shorter than this carry no verifiable claim.
 const MIN_EVIDENCE_CHARS: usize = 40;
+/// A sentence sitting under a heading that names the criterion outranks one
+/// that merely mentions the criterion's words in passing elsewhere.
+const SECTION_MATCH_WEIGHT: usize = 3;
 
 /// Signals gathered by the earlier gates. They do not change a criterion score
 /// — those measure the report against the KPI — but they do surface as risks
@@ -80,11 +84,15 @@ pub fn sentences(text: &str) -> Vec<String> {
     out
 }
 
+/// Tokenises criterion wording and widens each token with its equivalents in
+/// the other competition language. Criteria are authored in English while
+/// submissions are Turkish, so without this a criterion could never be matched
+/// against the report it is meant to measure.
 fn terms_of(text: &str) -> BTreeSet<String> {
     fold_ascii(text)
         .split(|character: char| !character.is_alphanumeric())
         .filter(|token| token.chars().count() >= 4)
-        .map(str::to_string)
+        .flat_map(criterion_vocabulary::expand)
         .collect()
 }
 
@@ -147,14 +155,38 @@ fn shorten(sentence: &str) -> String {
 /// first. Returning nothing is a meaningful answer: it means the report never
 /// addresses this criterion, and the score below reflects that.
 fn evidence_for(document: &Document, terms: &CriterionTerms) -> Vec<String> {
-    let mut scored: Vec<(usize, String)> = sentences(&document.raw_text)
-        .into_iter()
-        .filter(|sentence| sentence.chars().count() >= MIN_EVIDENCE_CHARS)
-        .filter_map(|sentence| {
-            qualifies_as_evidence(&sentence, terms).map(|weight| (weight, sentence))
-        })
-        .collect();
+    let mut scored: Vec<(usize, String)> = Vec::new();
+
+    // A report that devotes a section to a criterion ("5. Özgünlük") answers it
+    // in the body, not in the heading — and the heading itself is far too short
+    // to stand as evidence. Where a section title matches, its sentences are
+    // treated as addressing the criterion even when they never repeat its name,
+    // which is how reports are actually written.
+    for section in &document.sections {
+        if qualifies_as_evidence(&section.title, terms).is_none() {
+            continue;
+        }
+        for sentence in sentences(&section.content) {
+            if sentence.chars().count() < MIN_EVIDENCE_CHARS {
+                continue;
+            }
+            let own_terms = qualifies_as_evidence(&sentence, terms).unwrap_or(0);
+            scored.push((SECTION_MATCH_WEIGHT + own_terms, sentence));
+        }
+    }
+
+    for sentence in sentences(&document.raw_text) {
+        if sentence.chars().count() < MIN_EVIDENCE_CHARS {
+            continue;
+        }
+        if let Some(weight) = qualifies_as_evidence(&sentence, terms) {
+            scored.push((weight, sentence));
+        }
+    }
+
     scored.sort_by(|left, right| right.0.cmp(&left.0));
+    let mut seen = std::collections::HashSet::new();
+    scored.retain(|(_, sentence)| seen.insert(sentence.clone()));
     scored.truncate(MAX_EVIDENCE_PER_CRITERION);
     scored
         .into_iter()

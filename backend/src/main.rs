@@ -3,6 +3,7 @@ mod assessment_service;
 mod assessment_store;
 mod auth_policy;
 mod category_taxonomy;
+mod criterion_vocabulary;
 mod database;
 mod evaluation;
 mod evaluation_llm;

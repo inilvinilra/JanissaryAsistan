@@ -1,5 +1,5 @@
 use super::*;
-use crate::models::{FileType, Language};
+use crate::models::{FileType, Language, Section};
 
 fn report(text: &str) -> Document {
     Document {
@@ -259,4 +259,116 @@ fn scores_and_confidence_stay_inside_their_ranges() {
             score.confidence
         );
     }
+}
+
+/// KPI templates are authored in English while submissions are Turkish. Before
+/// the criterion vocabulary was introduced this produced no evidence for any
+/// criterion of any Turkish report, so every score fell back to whole-document
+/// heuristics and the offline path was effectively blind.
+#[test]
+fn an_english_criterion_matches_a_turkish_report() {
+    let document = report(IRRIGATION_REPORT);
+    let result = heuristic_evaluation(
+        &document,
+        // The report describes its method ("Yöntem olarak gradyan artırma…"),
+        // which an English criterion can only reach through the vocabulary.
+        &[kpi(
+            "Methodology",
+            "approach and experimental design",
+            100.0,
+        )],
+        &EvaluationContext::default(),
+    );
+    let criterion = &result.kpi_scores[0];
+    assert!(
+        !criterion.evidence.is_empty(),
+        "an English criterion must reach a Turkish report through the vocabulary"
+    );
+    assert!(
+        criterion
+            .evidence
+            .iter()
+            .all(|quote| is_grounded(&document, quote)),
+        "quotations must still come from the report"
+    );
+}
+
+/// The vocabulary must widen reach without dissolving the distinction between
+/// criteria: one the report genuinely never addresses stays unevidenced.
+#[test]
+fn the_vocabulary_does_not_make_every_criterion_match() {
+    let result = heuristic_evaluation(
+        &report(IRRIGATION_REPORT),
+        &[kpi(
+            "Pedagogical Value",
+            "curriculum classroom teaching",
+            100.0,
+        )],
+        &EvaluationContext::default(),
+    );
+    assert!(
+        result.kpi_scores[0].evidence.is_empty(),
+        "an unrelated criterion must not pick up evidence: {:?}",
+        result.kpi_scores[0].evidence
+    );
+}
+
+/// Reports answer a criterion in the body of the section named after it, not by
+/// repeating the criterion's own words. Scanning loose sentences alone missed
+/// an entire "Özgünlük" section because its heading was too short to quote and
+/// its paragraphs never said "özgünlük" again.
+#[test]
+fn a_section_named_after_the_criterion_supplies_its_evidence() {
+    let mut document = report(IRRIGATION_REPORT);
+    document.sections = vec![Section {
+        title: "5. Özgünlük".into(),
+        content: "Literatürdeki benzer çalışmalar çoğunlukla tek bir sensör tipine dayanmaktadır. \
+                  Bu projede sensör verisi ile hava tahmini verisinin birlikte kullanılması ayırt \
+                  edici yöndür."
+            .into(),
+        word_count: 24,
+    }];
+    document.raw_text = format!("{IRRIGATION_REPORT}\n{}", document.sections[0].content);
+
+    let result = heuristic_evaluation(
+        &document,
+        &[kpi("Originality", "novelty differentiation", 100.0)],
+        &EvaluationContext::default(),
+    );
+    let criterion = &result.kpi_scores[0];
+    assert!(
+        !criterion.evidence.is_empty(),
+        "the section body should supply the evidence"
+    );
+    assert!(
+        criterion
+            .evidence
+            .iter()
+            .all(|quote| is_grounded(&document, quote)),
+        "section evidence must still verify against the report"
+    );
+}
+
+/// A section that does not name the criterion must not donate its sentences,
+/// or every criterion would be evidenced by every section.
+#[test]
+fn an_unrelated_section_does_not_supply_evidence() {
+    let mut document = report(IRRIGATION_REPORT);
+    document.sections = vec![Section {
+        title: "7. Bütçe".into(),
+        content: "Proje bütçesi kalemler halinde planlanmış ve onaylanmıştır. Harcamalar \
+                  dönemsel olarak raporlanmaktadır."
+            .into(),
+        word_count: 16,
+    }];
+    let result = heuristic_evaluation(
+        &document,
+        &[kpi(
+            "Pedagogical Value",
+            "curriculum classroom teaching",
+            100.0,
+        )],
+        &EvaluationContext::default(),
+    );
+    assert!(result.kpi_scores[0].evidence.is_empty());
 }
