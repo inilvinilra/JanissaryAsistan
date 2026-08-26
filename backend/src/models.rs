@@ -965,3 +965,36 @@ pub struct ProjectAssessmentReadiness {
     pub ready_for_evaluation: bool,
     pub checks: Vec<AssessmentGate>,
 }
+
+/// Competition-wide analysis progress for the evaluation manager, whose role in
+/// the brief is to watch completion rates rather than individual reports.
+///
+/// Derived entirely from the stored analyses rather than from a job record, so
+/// it survives a restart and reports the same figures whichever instance is
+/// asked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssessmentProgress {
+    pub competition_id: i32,
+    pub total_projects: i64,
+    /// Projects whose report parsed. The analyses can only run on these, so
+    /// they are the denominator for the percentages below.
+    pub parsed_reports: i64,
+    pub category_fit_completed: i64,
+    pub similarity_completed: i64,
+    pub criterion_evaluation_completed: i64,
+    /// Projects an earlier gate marked for human attention.
+    pub flagged_for_review: i64,
+    /// Share of the three analyses completed across all parsed reports.
+    pub completion_percent: f64,
+    /// Projects still missing at least one analysis, newest first, capped for
+    /// the response size. This is the manager's work list.
+    pub pending_projects: Vec<PendingAssessment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingAssessment {
+    pub project_id: i32,
+    pub project_reference: String,
+    pub category: String,
+    pub missing: Vec<String>,
+}

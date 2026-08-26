@@ -5053,6 +5053,127 @@ impl Database {
         Ok(demo_slot_from_row(&row))
     }
 
+    /// Analysis progress across a competition, computed in one pass over the
+    /// stored analyses rather than by asking each project in turn — the
+    /// evaluation manager watches this while a bulk run is in flight, so it has
+    /// to stay cheap with a few hundred submissions.
+    pub async fn assessment_progress(
+        &self,
+        competition_id: i32,
+        pending_limit: i64,
+    ) -> Result<crate::models::AssessmentProgress> {
+        let totals = sqlx::query(
+            "SELECT
+                COUNT(*) AS total_projects,
+                COUNT(*) FILTER (WHERE p.document IS NOT NULL) AS parsed_reports,
+                COUNT(cf.project_id) AS category_fit_completed,
+                COUNT(sa.project_id) AS similarity_completed,
+                COUNT(ae.project_id) AS criterion_evaluation_completed,
+                COUNT(*) FILTER (
+                    WHERE cf.requires_review IS TRUE OR sa.requires_review IS TRUE
+                ) AS flagged_for_review
+             FROM projects p
+             LEFT JOIN project_category_fit_analyses cf ON cf.project_id = p.id
+             LEFT JOIN project_similarity_analyses sa ON sa.project_id = p.id
+             LEFT JOIN ai_evaluations ae ON ae.project_id = p.id
+             WHERE p.competition_id = $1",
+        )
+        .bind(competition_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let parsed_reports: i64 = totals.get("parsed_reports");
+        let category_fit_completed: i64 = totals.get("category_fit_completed");
+        let similarity_completed: i64 = totals.get("similarity_completed");
+        let criterion_evaluation_completed: i64 = totals.get("criterion_evaluation_completed");
+
+        // Three analyses per parsed report. A competition with nothing parsed
+        // yet is reported as 0% rather than dividing by zero.
+        let expected = parsed_reports * 3;
+        let completion_percent = if expected == 0 {
+            0.0
+        } else {
+            (category_fit_completed + similarity_completed + criterion_evaluation_completed) as f64
+                / expected as f64
+                * 100.0
+        };
+
+        let rows = sqlx::query(
+            "SELECT p.id, p.category,
+                    cf.project_id IS NOT NULL AS has_category_fit,
+                    sa.project_id IS NOT NULL AS has_similarity,
+                    ae.project_id IS NOT NULL AS has_evaluation
+             FROM projects p
+             LEFT JOIN project_category_fit_analyses cf ON cf.project_id = p.id
+             LEFT JOIN project_similarity_analyses sa ON sa.project_id = p.id
+             LEFT JOIN ai_evaluations ae ON ae.project_id = p.id
+             WHERE p.competition_id = $1
+               AND p.document IS NOT NULL
+               AND (cf.project_id IS NULL OR sa.project_id IS NULL OR ae.project_id IS NULL)
+             ORDER BY p.id DESC
+             LIMIT $2",
+        )
+        .bind(competition_id)
+        .bind(pending_limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let pending_projects = rows
+            .into_iter()
+            .map(|row| {
+                let id: i32 = row.get("id");
+                let mut missing = Vec::new();
+                if !row.get::<bool, _>("has_category_fit") {
+                    missing.push("category_fit".to_string());
+                }
+                if !row.get::<bool, _>("has_similarity") {
+                    missing.push("similarity".to_string());
+                }
+                if !row.get::<bool, _>("has_evaluation") {
+                    missing.push("criterion_evaluation".to_string());
+                }
+                crate::models::PendingAssessment {
+                    project_id: id,
+                    project_reference: format!("PRJ-{id:06}"),
+                    category: row.get("category"),
+                    missing,
+                }
+            })
+            .collect();
+
+        Ok(crate::models::AssessmentProgress {
+            competition_id,
+            total_projects: totals.get("total_projects"),
+            parsed_reports,
+            category_fit_completed,
+            similarity_completed,
+            criterion_evaluation_completed,
+            flagged_for_review: totals.get("flagged_for_review"),
+            completion_percent,
+            pending_projects,
+        })
+    }
+
+    /// Projects in this competition that still need at least one analysis. The
+    /// bulk run walks this list, so it resumes naturally after an interruption
+    /// instead of repeating work already stored.
+    pub async fn projects_awaiting_assessment(&self, competition_id: i32) -> Result<Vec<i32>> {
+        let rows = sqlx::query(
+            "SELECT p.id FROM projects p
+             LEFT JOIN project_category_fit_analyses cf ON cf.project_id = p.id
+             LEFT JOIN project_similarity_analyses sa ON sa.project_id = p.id
+             LEFT JOIN ai_evaluations ae ON ae.project_id = p.id
+             WHERE p.competition_id = $1
+               AND p.document IS NOT NULL
+               AND (cf.project_id IS NULL OR sa.project_id IS NULL OR ae.project_id IS NULL)
+             ORDER BY p.id",
+        )
+        .bind(competition_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|row| row.get("id")).collect())
+    }
+
     pub async fn competition_report(
         &self,
         competition_id: i32,

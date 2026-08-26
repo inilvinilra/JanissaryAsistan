@@ -267,6 +267,14 @@ async fn main() {
         .route("/demo-day/{id}", patch(update_demo_day_slot))
         .route("/competitions/{id}/report", get(get_competition_report))
         .route(
+            "/competitions/{id}/assessment-progress",
+            get(get_assessment_progress),
+        )
+        .route(
+            "/competitions/{id}/assessment-run",
+            axum::routing::post(run_competition_assessments),
+        )
+        .route(
             "/competitions/{id}/finalize",
             axum::routing::post(finalize_competition),
         )
@@ -3497,6 +3505,135 @@ async fn get_competition_report(
             eprintln!("Competition report error: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })
+}
+
+/// Competition-wide analysis progress. The brief gives the evaluation manager
+/// the job of watching completion rates, which needs one figure per competition
+/// rather than a request per project.
+async fn get_assessment_progress(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<models::AssessmentProgress>, (StatusCode, String)> {
+    let pending_limit = params
+        .get("pending_limit")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(50)
+        .clamp(1, 500);
+    state
+        .db
+        .assessment_progress(id, pending_limit)
+        .await
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+
+/// Starts the analyses for every project in the competition that is still
+/// missing one.
+///
+/// The work is queued rather than awaited: a criterion evaluation calls a model
+/// service and takes seconds, so a few hundred submissions would far exceed any
+/// reasonable request timeout. Progress is read back from
+/// `/competitions/{id}/assessment-progress`, which derives it from the stored
+/// analyses — there is no job record to fall out of step with reality, and an
+/// interrupted run simply resumes where it left off.
+async fn run_competition_assessments(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<models::AssessmentProgress>, (StatusCode, String)> {
+    if !matches!(
+        actor.role.as_str(),
+        "system_admin" | "competition_manager" | "chief_judge" | "evaluation_manager"
+    ) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "This role cannot start a bulk analysis".into(),
+        ));
+    }
+    let pending = state
+        .db
+        .projects_awaiting_assessment(id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if pending.is_empty() {
+        return state
+            .db
+            .assessment_progress(id, 50)
+            .await
+            .map(Json)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()));
+    }
+    state
+        .db
+        .record_audit(
+            "competition_assessment_run_started",
+            &actor.email,
+            "competition",
+            Some(id),
+            serde_json::json!({ "queued_projects": pending.len() }),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let worker_state = state.clone();
+    tokio::spawn(async move {
+        process_pending_assessments(worker_state, id, pending).await;
+    });
+
+    state
+        .db
+        .assessment_progress(id, 50)
+        .await
+        .map(Json)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+
+/// Walks the queue one project at a time.
+///
+/// Sequential on purpose: the model service is rate limited, and running the
+/// competition in parallel would trade a slow, complete pass for a fast one
+/// full of gaps. A project that fails is logged and skipped rather than
+/// stopping the run, and the next call picks it up again because the queue is
+/// derived from what is missing.
+async fn process_pending_assessments(state: AppState, competition_id: i32, pending: Vec<i32>) {
+    let queued = pending.len();
+    tracing::info!(competition_id, queued, "bulk assessment run started");
+    let mut completed = 0_usize;
+    let mut failed = 0_usize;
+    for project_id in pending {
+        let project = match state.db.get_project(project_id).await {
+            Ok(Some(project)) => project,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::error!(%error, project_id, "bulk assessment could not load the project");
+                failed += 1;
+                continue;
+            }
+        };
+        if let Err(error) = assessment_service::run_category_fit(&state.db, &project).await {
+            tracing::warn!(%error, project_id, "bulk category-fit analysis failed");
+        }
+        if let Err(error) = assessment_service::run_similarity(&state.db, &project).await {
+            tracing::warn!(%error, project_id, "bulk similarity analysis failed");
+        }
+        match evaluation_service::run_criterion_evaluation(&state.db, &project).await {
+            Ok(_) => completed += 1,
+            Err(error) => {
+                tracing::warn!(%error, project_id, "bulk criterion evaluation failed");
+                failed += 1;
+            }
+        }
+        // Let the dashboard follow along instead of jumping at the end.
+        let _ = state.update_events.send(());
+    }
+    tracing::info!(
+        competition_id,
+        queued,
+        completed,
+        failed,
+        "bulk assessment run finished"
+    );
 }
 
 async fn finalize_competition(
