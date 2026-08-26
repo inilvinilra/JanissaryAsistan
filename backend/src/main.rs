@@ -835,6 +835,18 @@ fn project_id_from_path(path: &str) -> Option<i32> {
     path_segment_id(path, "projects")
 }
 
+/// Parsing reads the file from disk, extracts PDF text and may shell out to
+/// OCR. All of that is blocking and runs for seconds on a large scanned
+/// submission, which would stall a runtime worker and, with a few concurrent
+/// uploads, the whole API. It is moved off the async runtime here.
+async fn parse_file_off_runtime(path: &str) -> Result<models::Document, String> {
+    let owned = path.to_string();
+    tokio::task::spawn_blocking(move || parser::parse_file(&owned))
+        .await
+        .map_err(|error| format!("Parser task failed: {error}"))?
+        .map_err(|error| format!("Parse error: {error}"))
+}
+
 async fn root() -> &'static str {
     "Hello! Backend is running."
 }
@@ -2048,28 +2060,32 @@ async fn upload_project_file(
         .and_then(|name| name.to_str())
         .unwrap_or("project-file.bin");
     let dir = format!("uploads/project-{id}");
-    std::fs::create_dir_all(&dir)
+    tokio::fs::create_dir_all(&dir)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let path = format!("{dir}/{unique}-{safe_name}");
-    std::fs::write(&path, &bytes)
+    tokio::fs::write(&path, &bytes)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let virus_scan = scan_uploaded_file(&path).await?;
 
     // The report must be parsed from the plaintext bytes on disk, before they
     // are encrypted at rest below — the same order upload_project follows.
     let parsed_report = if set_as_report {
-        let document = parser::parse_file(&path)
-            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Parse error: {e}")))?;
+        let document = parse_file_off_runtime(&path)
+            .await
+            .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
         Some(document)
     } else {
         None
     };
 
-    std::fs::write(&path, protect_file_bytes(&bytes)?)
+    tokio::fs::write(&path, protect_file_bytes(&bytes)?)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let file = state
         .db
@@ -2281,14 +2297,14 @@ async fn scan_uploaded_file(path: &str) -> Result<&'static str, (StatusCode, Str
     {
         Ok(output) if output.status.code() == Some(0) => Ok("clean"),
         Ok(output) if output.status.code() == Some(1) => {
-            let _ = std::fs::remove_file(path);
+            let _ = tokio::fs::remove_file(path).await;
             Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "Upload rejected: malware detected".into(),
             ))
         }
         Ok(_) | Err(_) if required => {
-            let _ = std::fs::remove_file(path);
+            let _ = tokio::fs::remove_file(path).await;
             Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Virus scanner is unavailable; upload is blocked".into(),
@@ -2869,7 +2885,8 @@ async fn upload_project(
         ));
     }
 
-    std::fs::create_dir_all("uploads")
+    tokio::fs::create_dir_all("uploads")
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let ext = std::path::Path::new(&filename)
@@ -2893,13 +2910,16 @@ async fn upload_project(
         .unwrap()
         .as_nanos();
     let stored_path = format!("uploads/{unique}.{ext}");
-    std::fs::write(&stored_path, &file_bytes)
+    tokio::fs::write(&stored_path, &file_bytes)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     scan_uploaded_file(&stored_path).await?;
 
-    let document = parser::parse_file(&stored_path)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Parse error: {e}")))?;
-    std::fs::write(&stored_path, protect_file_bytes(&file_bytes)?)
+    let document = parse_file_off_runtime(&stored_path)
+        .await
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    tokio::fs::write(&stored_path, protect_file_bytes(&file_bytes)?)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     score_and_store(
@@ -3788,7 +3808,8 @@ async fn upload_submission_version(
             "File content does not match an accepted file type".into(),
         ));
     }
-    std::fs::create_dir_all("uploads/submissions")
+    tokio::fs::create_dir_all("uploads/submissions")
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3799,12 +3820,15 @@ async fn upload_submission_version(
         .and_then(|name| name.to_str())
         .unwrap_or("submission.bin");
     let stored_path = format!("uploads/submissions/{unique}-{safe_name}");
-    std::fs::write(&stored_path, bytes)
+    tokio::fs::write(&stored_path, bytes)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     scan_uploaded_file(&stored_path).await?;
-    let original = std::fs::read(&stored_path)
+    let original = tokio::fs::read(&stored_path)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    std::fs::write(&stored_path, protect_file_bytes(&original)?)
+    tokio::fs::write(&stored_path, protect_file_bytes(&original)?)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     state
         .db
@@ -4689,7 +4713,7 @@ async fn update_ranking(
 }
 
 async fn test_parse() -> Result<Json<models::Document>, StatusCode> {
-    match parser::parse_file("samples/sample-project.md") {
+    match parse_file_off_runtime("samples/sample-project.md").await {
         Ok(document) => Ok(Json(document)),
         Err(e) => {
             eprintln!("Parse error: {}", e);
