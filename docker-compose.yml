@@ -13,6 +13,29 @@ services:
     volumes:
       - jury-postgres:/var/lib/postgresql/data
 
+  # ClamAV ships without a signature database, and `clamscan` exits non-zero
+  # without one. Because the backend runs with VIRUS_SCAN_REQUIRED=true, that
+  # turns every upload into a 503 — so signatures are fetched before the backend
+  # accepts traffic, and refreshed on a schedule while it runs.
+  clamav-signatures:
+    build: ./backend
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        freshclam --datadir=/var/lib/clamav || test -f /var/lib/clamav/daily.cvd || test -f /var/lib/clamav/daily.cld
+        while true; do sleep 21600; freshclam --datadir=/var/lib/clamav || true; done
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -f /var/lib/clamav/daily.cvd -o -f /var/lib/clamav/daily.cld
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+    volumes:
+      - jury-clamav:/var/lib/clamav
+
   backend:
     build: ./backend
     environment:
@@ -33,6 +56,14 @@ services:
     depends_on:
       database:
         condition: service_healthy
+      clamav-signatures:
+        condition: service_healthy
+    volumes:
+      # Uploaded reports live on disk while only their paths are stored in the
+      # database. Without this they are lost on every redeploy, leaving rows
+      # that point at files which no longer exist.
+      - jury-uploads:/app/uploads
+      - jury-clamav:/var/lib/clamav:ro
     ports:
       - "3000:3000"
 
@@ -77,3 +108,5 @@ services:
 
 volumes:
   jury-postgres:
+  jury-uploads:
+  jury-clamav:

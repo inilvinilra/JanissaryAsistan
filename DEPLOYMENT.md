@@ -25,8 +25,26 @@ Required values:
 | `BOOTSTRAP_ADMIN_EMAIL` | Initial system-administrator email; required only for the first production start. |
 | `BOOTSTRAP_ADMIN_PASSWORD` | Initial system-administrator password; required only for the first production start. |
 | `REQUIRE_TWO_FACTOR` | Requires TOTP enrollment for privileged roles; set to `true` in production. |
+| `PUBLIC_FRONTEND_ORIGIN` | Comma-separated HTTPS dashboard origins allowed by API CORS. Include `https://tauri.localhost` when distributing the desktop application. |
+| `PUBLIC_API_URL` | API origin compiled into the frontend. |
 
-The backend image contains ClamAV and Turkish/English OCR packages. Before enabling uploads, update ClamAV signatures through the platform's scheduled `freshclam` job or a managed scanner integration. Because `VIRUS_SCAN_REQUIRED=true`, an unavailable or outdated scanner rejects uploads instead of accepting unscanned content.
+Values containing spaces or characters such as `!` must be quoted in `.env`, for example `BOOTSTRAP_ADMIN_NAME="Initial System Administrator"`. The parser stops at the first malformed line, so an unquoted value would silently drop every variable defined below it. The backend refuses to start rather than run on a half-loaded configuration.
+
+### Malware scanning
+
+The backend image contains ClamAV and Turkish/English OCR packages, but ClamAV ships without a signature database and `clamscan` exits non-zero without one. Because `VIRUS_SCAN_REQUIRED=true`, that would reject every upload.
+
+Compose therefore runs a `clamav-signatures` service that fetches the database into the shared `jury-clamav` volume and refreshes it every six hours. The backend waits for that service to report healthy before accepting traffic, so the first upload is scanned against real signatures. An unavailable or outdated scanner still rejects uploads rather than accepting unscanned content.
+
+### Persistence
+
+| Volume | Holds |
+| --- | --- |
+| `jury-postgres` | PostgreSQL data directory. |
+| `jury-uploads` | Submitted reports and attachments, encrypted at rest. |
+| `jury-clamav` | ClamAV signature database. |
+
+`jury-uploads` is not optional. The database stores only the path to each submitted file, so losing the volume leaves records pointing at files that no longer exist, and the applicant's submission is gone.
 
 ## Monitoring and backups
 
@@ -39,8 +57,13 @@ For horizontal backend scaling, all instances must use the same PostgreSQL datab
 To start the optional local monitoring profile, set `ALERT_WEBHOOK_URL` and run `docker compose --profile monitoring up -d`. Prometheus is exposed locally on port `9090` and Alertmanager on port `9093`; production deployment should restrict both ports to monitoring infrastructure.
 
 `ops/backup-crontab.example` is a daily backup schedule template. Replace the connection value through the host secret manager rather than committing it, store generated backups in encrypted restricted storage, and rehearse restoration with `backend/restore-db.sh`.
-| `PUBLIC_FRONTEND_ORIGIN` | Comma-separated HTTPS dashboard origins allowed by API CORS. Include `https://tauri.localhost` when distributing the desktop application. |
-| `PUBLIC_API_URL` | API origin compiled into the frontend. |
+
+A database dump alone is not a complete backup: submitted files live in `jury-uploads` and only their paths are in the database. Set `UPLOADS_DIR` so `backup-db.sh` archives them in the same run, or capture the volume separately:
+
+```bash
+docker run --rm -v jury-uploads:/uploads -v "$PWD/backups":/backups alpine \
+  tar -czf /backups/uploads.tar.gz -C /uploads .
+```
 
 Optional AI scoring uses `AI_SCORING_URL` and `AI_SCORING_TOKEN`. See [backend/AI-SCORING-CONTRACT.md](backend/AI-SCORING-CONTRACT.md).
 
