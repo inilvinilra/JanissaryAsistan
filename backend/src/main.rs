@@ -12,6 +12,7 @@ mod language;
 mod models;
 mod parser;
 mod research;
+mod sample_data;
 mod scoring;
 mod template;
 

@@ -19,12 +19,20 @@ services:
   # accepts traffic, and refreshed on a schedule while it runs.
   clamav-signatures:
     build: ./backend
+    # Writes into the signature volume, so unlike the backend it needs root.
+    # It serves no traffic; the backend mounts the result read-only.
+    user: root
     entrypoint:
       - /bin/sh
       - -ec
       - |
         freshclam --datadir=/var/lib/clamav || test -f /var/lib/clamav/daily.cvd || test -f /var/lib/clamav/daily.cld
-        while true; do sleep 21600; freshclam --datadir=/var/lib/clamav || true; done
+        chmod -R a+rX /var/lib/clamav
+        while true; do
+          sleep 21600
+          freshclam --datadir=/var/lib/clamav || true
+          chmod -R a+rX /var/lib/clamav
+        done
     healthcheck:
       test:
         - CMD-SHELL
