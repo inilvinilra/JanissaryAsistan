@@ -4,6 +4,13 @@ type Dict = Record<string, string>;
 
 const dictionaries: Record<Locale, Dict> = {
   tr: {
+    selectCompetitionFirst: 'Yüklemeden önce bir yarışma seçin.',
+    bulkUploadHint: 'Birden fazla rapor seçebilirsiniz; her biri ayrı proje olarak eklenir.',
+    bulkUploadSelected: '{count} rapor seçildi.',
+    bulkUploadNaming: 'Toplu yüklemede her projenin adı dosya adından alınır.',
+    bulkUploadAction: '{count} raporu yükle',
+    bulkUploadProgress: 'Yükleniyor {done}/{total}…',
+    bulkUploadPartial: '{ok} rapor eklendi, {failed} rapor başarısız:',
     assessmentProgressTitle: 'Analiz ilerlemesi',
     assessmentCompletion: 'Tamamlanma',
     assessmentParsedReports: 'Okunan rapor',
@@ -401,6 +408,13 @@ const dictionaries: Record<Locale, Dict> = {
     lockResults: 'Sonuçları kilitle',
   },
   en: {
+    selectCompetitionFirst: 'Select a competition before uploading.',
+    bulkUploadHint: 'You can select several reports; each is added as its own project.',
+    bulkUploadSelected: '{count} report(s) selected.',
+    bulkUploadNaming: 'In a bulk upload each project is named after its file.',
+    bulkUploadAction: 'Upload {count} reports',
+    bulkUploadProgress: 'Uploading {done}/{total}…',
+    bulkUploadPartial: '{ok} report(s) added, {failed} failed:',
     assessmentProgressTitle: 'Analysis progress',
     assessmentCompletion: 'Completion',
     assessmentParsedReports: 'Parsed reports',

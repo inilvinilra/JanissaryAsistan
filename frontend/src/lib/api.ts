@@ -669,6 +669,46 @@ export async function uploadProject(name: string, category: string, competitionI
   return res.json();
 }
 
+export interface BulkUploadOutcome {
+  created: Project[];
+  failed: Array<{ fileName: string; reason: string }>;
+}
+
+/** Strips the extension so a report file becomes a readable project name. */
+export function projectNameFromFile(fileName: string): string {
+  const withoutExtension = fileName.replace(/\.[^.]+$/, '');
+  return withoutExtension.replace(/[_-]+/g, ' ').trim() || fileName;
+}
+
+/**
+ * Imports a set of reports as separate projects.
+ *
+ * Deliberately a loop over the single-report endpoint rather than a new bulk
+ * route: each file still passes the same signature check, malware scan, parse
+ * and scoring, one bad file cannot fail the rest, and the caller sees exactly
+ * which report failed and why. Uploads run one at a time because each triggers
+ * parsing and analysis on the server, and firing a hundred at once would bury
+ * the very API the operator is watching.
+ */
+export async function uploadProjects(
+  files: File[],
+  category: string,
+  competitionId: number,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<BulkUploadOutcome> {
+  const created: Project[] = [];
+  const failed: BulkUploadOutcome['failed'] = [];
+  for (const [index, file] of files.entries()) {
+    try {
+      created.push(await uploadProject(projectNameFromFile(file.name), category, competitionId, file));
+    } catch (reason) {
+      failed.push({ fileName: file.name, reason: (reason as Error).message });
+    }
+    onProgress?.(index + 1, files.length);
+  }
+  return { created, failed };
+}
+
 export async function updateRanking(category: string, order: number[]): Promise<void> {
   const res = await fetch(`${API_URL}/ranking`, {
     method: 'PATCH',
