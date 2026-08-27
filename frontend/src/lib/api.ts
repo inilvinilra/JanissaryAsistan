@@ -645,6 +645,13 @@ export function getJuryScores(projectId: number): Promise<JuryScore[]> {
   return jsonRequest(`${API_URL}/projects/${projectId}/jury-scores`);
 }
 
+// One request for every project's scores instead of one request per project —
+// the per-project loop used to fire N parallel requests and blow through the
+// per-session rate limit on any competition with more than ~100 projects.
+export function getAllJuryScores(): Promise<JuryScore[]> {
+  return jsonRequest(`${API_URL}/jury-scores`);
+}
+
 export function addJuryScore(projectId: number, input: Omit<JuryScore, 'id' | 'project_id' | 'submitted_at'>): Promise<JuryScore> {
   return jsonRequest(`${API_URL}/projects/${projectId}/jury-scores`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),

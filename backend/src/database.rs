@@ -1950,6 +1950,40 @@ impl Database {
         rows.iter().map(jury_score_from_row).collect()
     }
 
+    /// Every project's scores in one query, optionally narrowed to a single
+    /// competition. Used to render a scores-per-project view (e.g. the
+    /// reports panel) without firing one `list_jury_scores` request per
+    /// project — that N+1 pattern used to fire ~100 parallel requests for a
+    /// 100-project competition and blow through the per-session rate limit.
+    pub async fn list_all_jury_scores(
+        &self,
+        competition_id: Option<i32>,
+    ) -> Result<Vec<crate::models::JuryScore>> {
+        let rows = match competition_id {
+            Some(competition_id) => {
+                sqlx::query(
+                    "SELECT s.id, s.project_id, s.stage_id, s.juror_name, s.total_score, s.kpi_scores, s.notes, s.submitted_at
+                     FROM jury_scores s
+                     JOIN projects p ON p.id = s.project_id
+                     WHERE p.competition_id = $1
+                     ORDER BY s.project_id, s.submitted_at DESC, s.id DESC",
+                )
+                .bind(competition_id)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query(
+                    "SELECT id, project_id, stage_id, juror_name, total_score, kpi_scores, notes, submitted_at
+                     FROM jury_scores ORDER BY project_id, submitted_at DESC, id DESC",
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
+        rows.iter().map(jury_score_from_row).collect()
+    }
+
     pub async fn add_jury_assignment(
         &self,
         project_id: i32,

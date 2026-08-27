@@ -338,6 +338,7 @@ async fn main() {
             "/email-campaigns/{id}/dispatch",
             axum::routing::post(dispatch_email_campaign),
         )
+        .route("/jury-scores", get(list_all_jury_scores))
         .route("/ranking", patch(update_ranking))
         .route("/activity", get(list_activity))
         .route("/test/parse", get(test_parse))
@@ -4034,6 +4035,35 @@ fn visible_jury_scores(actor: &AuthenticatedUser, scores: Vec<JuryScore>) -> Vec
         .into_iter()
         .filter(|score| score.juror_name == actor.email)
         .collect()
+}
+
+/// Every project's jury scores in one call, for views (reports, dashboards)
+/// that used to fetch `/projects/{id}/jury-scores` once per project. That
+/// N+1 pattern fired one request per project in parallel — with a
+/// hundred-project competition, that alone exceeded the per-session rate
+/// limit before the view finished loading.
+async fn list_all_jury_scores(
+    Extension(actor): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<JuryScore>>, StatusCode> {
+    let requested_competition_id = params
+        .get("competition_id")
+        .and_then(|value| value.parse::<i32>().ok());
+    let competition_id = if actor.role == "system_admin" {
+        requested_competition_id
+    } else {
+        actor.competition_id
+    };
+    let scores = state
+        .db
+        .list_all_jury_scores(competition_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "bulk jury score lookup failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(visible_jury_scores(&actor, scores)))
 }
 
 async fn add_jury_score(

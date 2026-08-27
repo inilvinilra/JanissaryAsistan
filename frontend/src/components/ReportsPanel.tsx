@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Download, FileText, RefreshCw } from 'lucide-react';
-import { getJuryScores, getProjects, type Project, type JuryScore } from '@/lib/api';
+import { getAllJuryScores, getProjects, type Project, type JuryScore } from '@/lib/api';
 import { createXlsxWorkbook } from '@/lib/xlsx';
 import { createPdfReport } from '@/lib/pdf';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +9,7 @@ import { useLocale } from '@/lib/locale-context';
 export function ReportsPanel() {
   const { t } = useLocale();
   const [projects, setProjects] = useState<Project[]>([]); const [scores, setScores] = useState<Record<number, JuryScore[]>>({}); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
-  async function load() { setLoading(true); try { const items = await getProjects(); const entries = await Promise.all(items.map(async (project) => [project.id, await getJuryScores(project.id)] as const)); setProjects(items); setScores(Object.fromEntries(entries)); setError(''); } catch (e) { setError((e as Error).message); } finally { setLoading(false); } }
+  async function load() { setLoading(true); try { const [items, allScores] = await Promise.all([getProjects(), getAllJuryScores()]); const grouped: Record<number, JuryScore[]> = {}; for (const score of allScores) { (grouped[score.project_id] ??= []).push(score); } setProjects(items); setScores(grouped); setError(''); } catch (e) { setError((e as Error).message); } finally { setLoading(false); } }
   useEffect(() => { void load(); }, []);
   const ranked = useMemo(() => [...projects].sort((a, b) => (a.manual_rank ?? 9999) - (b.manual_rank ?? 9999) || b.ai_score - a.ai_score), [projects]);
   const averageGap = useMemo(() => { const gaps = ranked.flatMap((p) => { const items = scores[p.id] ?? []; if (!items.length) return []; return [p.ai_score - items.reduce((sum, item) => sum + item.total_score, 0) / items.length]; }); return gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 0; }, [ranked, scores]);
