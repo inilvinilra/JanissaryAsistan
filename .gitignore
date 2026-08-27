@@ -26,5 +26,6 @@ Jüri-Asistani-Proje-Sablonu.pdf
 # Credential files — never commit. Keep these outside the repository.
 Apis.md
 Apikeys.md
+API KEYS.md
 *.key
 *credentials*
