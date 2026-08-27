@@ -2073,7 +2073,12 @@ impl Database {
              FROM projects p
              JOIN ai_evaluations a ON a.project_id = p.id
              LEFT JOIN project_category_fit_analyses c ON c.project_id = p.id
-             WHERE p.team_id = $1
+             -- Withheld until the judge marks the review finished. The AI
+             -- produces a pre-assessment for the jury, not a result for the
+             -- applicant: releasing it earlier would present a score as the
+             -- outcome while the decision the brief reserves for the judge is
+             -- still open. The portal already promises this ordering.
+             WHERE p.team_id = $1 AND p.review_completed = TRUE
              ORDER BY a.evaluated_at DESC, p.id DESC",
         )
         .bind(team_id)

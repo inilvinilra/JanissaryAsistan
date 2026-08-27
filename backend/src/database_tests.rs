@@ -339,7 +339,9 @@ async fn contestant_feedback_carries_no_judge_facing_risks() {
         .fetch_one(&database.pool)
         .await
         .expect("team insert should succeed");
-        sqlx::query("UPDATE projects SET team_id = $1 WHERE id = $2")
+        // The judge has finished, which is what releases feedback at all; this
+        // test is about what that feedback may contain.
+        sqlx::query("UPDATE projects SET team_id = $1, review_completed = TRUE WHERE id = $2")
             .bind(team_id)
             .bind(project_id)
             .execute(&database.pool)
@@ -473,5 +475,75 @@ async fn expired_and_revoked_sessions_stop_authenticating() {
         .await
         .expect("session query should succeed");
         assert_eq!(usable, vec!["live".to_string()]);
+    });
+}
+
+/// The brief's applicant flow starts with the evaluation being completed. The
+/// AI produces a pre-assessment for the jury, so releasing it before the judge
+/// has finished would show an applicant a score as their outcome while the
+/// decision is still open.
+#[tokio::test]
+async fn applicants_see_nothing_until_the_judge_finishes_the_review() {
+    with_database!(database, {
+        let competition_id = seed_competition(database).await;
+        let project_id = insert_report(database, competition_id, "sustainability").await;
+        let team_id: i32 = sqlx::query_scalar(
+            "INSERT INTO teams (competition_id, name) VALUES ($1, 'Test Team') RETURNING id",
+        )
+        .bind(competition_id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("team insert should succeed");
+        sqlx::query("UPDATE projects SET team_id = $1 WHERE id = $2")
+            .bind(team_id)
+            .bind(project_id)
+            .execute(&database.pool)
+            .await
+            .expect("project should join the team");
+
+        database
+            .upsert_ai_evaluation(
+                project_id,
+                &crate::models::UpsertAiEvaluation {
+                    model_version: "test".into(),
+                    total_score: 70.0,
+                    confidence: 0.6,
+                    source_file_version: None,
+                    kpi_scores: Vec::new(),
+                    strengths: vec!["Guclu yon".into()],
+                    weaknesses: vec!["Gelistirilecek alan".into()],
+                    missing_information: vec!["Olcum ekleyin".into()],
+                    risks: Vec::new(),
+                    sources: Vec::new(),
+                    similar_projects: Vec::new(),
+                },
+            )
+            .await
+            .expect("evaluation should store");
+
+        assert!(
+            database
+                .list_contestant_feedback(team_id)
+                .await
+                .expect("feedback query should succeed")
+                .is_empty(),
+            "a stored AI evaluation alone must not reach the applicant"
+        );
+
+        sqlx::query("UPDATE projects SET review_completed = TRUE WHERE id = $1")
+            .bind(project_id)
+            .execute(&database.pool)
+            .await
+            .expect("the judge marks the review finished");
+
+        assert_eq!(
+            database
+                .list_contestant_feedback(team_id)
+                .await
+                .expect("feedback query should succeed")
+                .len(),
+            1,
+            "once the review is finished the applicant sees their feedback"
+        );
     });
 }
