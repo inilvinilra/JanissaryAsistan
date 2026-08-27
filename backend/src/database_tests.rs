@@ -8,6 +8,15 @@
 //! absolute counts and cannot be disturbed by, or disturb, another test or a
 //! development database. They are skipped when `TEST_DATABASE_URL` is unset, so
 //! `cargo test` still works with no PostgreSQL available.
+//!
+//! Cleanup runs at the end of a passing test. A test that panics, or a run that
+//! is killed part way, leaves its database behind — they are harmless but
+//! accumulate, and all carry the `jury_test_` prefix:
+//!
+//! ```text
+//! psql -tAc "SELECT datname FROM pg_database WHERE datname LIKE 'jury_test_%'" \
+//!   | xargs -r -n1 -I{} psql -c 'DROP DATABASE "{}" WITH (FORCE)'
+//! ```
 
 use super::*;
 use crate::models::{Document, FileType};
