@@ -260,6 +260,31 @@ fn two_factor_policy_defaults_to_required_in_production() {
 }
 
 #[test]
+fn rate_limit_keys_authenticated_requests_by_session_not_shared_proxy_ip() {
+    // Behind any reverse proxy (the local Vite dev proxy, or a production
+    // ingress), every distinct browser session arrives from the same peer
+    // IP. Keying the limit by IP alone means two unrelated logged-in users
+    // share one 120-req/min budget and rate-limit each other. Keying by
+    // the session's own bearer token gives each session its own budget
+    // regardless of which IP it was proxied through.
+    let mut headers_a = HeaderMap::new();
+    headers_a.insert(
+        "authorization",
+        HeaderValue::from_static("Bearer session-token-a"),
+    );
+    let mut headers_b = HeaderMap::new();
+    headers_b.insert(
+        "authorization",
+        HeaderValue::from_static("Bearer session-token-b"),
+    );
+    assert_ne!(
+        rate_limit_client(&headers_a, Some("127.0.0.1"), false),
+        rate_limit_client(&headers_b, Some("127.0.0.1"), false),
+        "two different sessions behind the same proxy IP must not share a rate-limit bucket"
+    );
+}
+
+#[test]
 fn rate_limit_ignores_spoofed_forwarded_headers_without_a_trusted_proxy() {
     let mut headers = HeaderMap::new();
     headers.insert(

@@ -434,6 +434,9 @@ async fn rate_limit(
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
+    if matches!(request.uri().path(), "/health" | "/metrics") {
+        return next.run(request).await;
+    }
     state.request_count.fetch_add(1, Ordering::Relaxed);
     let trust_proxy_headers = std::env::var("TRUST_PROXY_HEADERS")
         .is_ok_and(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes"));
@@ -520,11 +523,26 @@ async fn database_update_listener(state: AppState, database_url: String) {
     }
 }
 
+/// Any reverse proxy in front of the API (the local Vite dev proxy included)
+/// makes every distinct client arrive from the same peer IP. An authenticated
+/// request carries its own session token, which is a far better rate-limit
+/// key than the shared proxy IP: each session gets its own budget instead of
+/// every user behind the proxy fighting over one. Unauthenticated requests
+/// (login, health checks) have no token yet, so they fall back to IP.
 fn rate_limit_client(
     headers: &HeaderMap,
     peer_address: Option<&str>,
     trust_proxy_headers: bool,
 ) -> String {
+    if let Some(token) = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return format!("session:{token}");
+    }
     if trust_proxy_headers {
         if let Some(client) = headers
             .get("x-forwarded-for")
